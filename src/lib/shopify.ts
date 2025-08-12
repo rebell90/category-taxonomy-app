@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // src/lib/shopify.ts
 const SHOP = process.env.SHOPIFY_SHOP;           // e.g. "mrjmdj-wq"
 const TOKEN = process.env.SHOPIFY_ADMIN_TOKEN;   // Admin API token from the merchant store custom app

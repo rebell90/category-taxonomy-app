@@ -1,4 +1,4 @@
-// src/app/api/public/categories-flat/route.ts
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 
@@ -12,7 +12,7 @@ export async function GET() {
   res.headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS')
   res.headers.set('Access-Control-Allow-Headers', 'Content-Type')
   return res
-}
+}cd 
 export async function OPTIONS() {
   const res = new Response(null, { status: 204 })
   res.headers.set('Access-Control-Allow-Origin', '*')

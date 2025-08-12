@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // src/lib/product-metafields.ts
 import { shopifyAdminGraphQL } from '@/lib/shopify'
 import { getSlugsForProduct } from '@/lib/categories'

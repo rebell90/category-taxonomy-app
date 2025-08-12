@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 type Category = {
   id: string
@@ -169,29 +169,24 @@ function ProductSearch({ onPick }: { onPick: (p: ProductHit | null) => void }) {
 
       {hits.length > 0 && (
         <div className="absolute z-10 mt-1 w-full max-h-80 overflow-auto rounded border bg-white shadow">
-        {hits.map(p => (
-        <button
-            key={p.id}
-            onClick={() => { onPick(p); setQuery(''); setHits([]) }}
-            className="w-full flex items-center gap-3 p-2 hover:bg-blue-50 text-left"
-        >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            {p.image ? (
-            <img
-                src={p.image}
-                alt=""
-                className="h-8 w-8 object-cover rounded"
-            />
-         ) : (
-            <div className="h-8 w-8 rounded bg-gray-200" />
-         )}
-            <div className="flex-1">
-            {/* Bigger + bold title */}
-            <div className="text-base font-bold text-gray-900">{p.title}</div>
-            <div className="text-xs text-gray-500">{p.handle} · {p.status}</div>
-            </div>
-        </button>
-        ))}
+{hits.map(p => (
+  <button
+    key={p.id}
+    onClick={() => { onPick(p); setQuery(''); setHits([]) }}
+    className="w-full flex items-center gap-3 p-2 hover:bg-blue-50 text-left"
+  >
+    {/* eslint-disable-next-line @next/next/no-img-element */}
+    {p.image ? (
+      <img src={p.image} alt="" className="h-8 w-8 object-cover rounded" />
+    ) : (
+      <div className="h-8 w-8 rounded bg-gray-200" />
+    )}
+    <div className="flex-1">
+      <div className="text-base font-bold text-gray-900">{p.title}</div>
+      <div className="text-xs text-gray-500">{p.handle} · {p.status}</div>
+    </div>
+  </button>
+))}
           {nextCursor && (
             <button onClick={loadMore} className="w-full p-2 text-sm text-blue-600 hover:bg-gray-50">
               Load more…
