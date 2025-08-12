@@ -1,40 +1,60 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import prisma from '@/lib/prisma'
 import { NextRequest, NextResponse } from 'next/server'
+import prisma from '@/lib/prisma'
 
-// (Optional) make this route always dynamic to avoid any accidental caching
 export const dynamic = 'force-dynamic'
 
+type DbCategory = {
+  id: string
+  title: string
+  slug: string
+  parentId: string | null
+}
+
+type TreeCategory = DbCategory & {
+  children: TreeCategory[]
+}
+
+// CREATE
 export async function POST(req: NextRequest) {
   try {
     const { title, slug, parentId } = await req.json()
-
     if (!title || !slug) {
       return NextResponse.json({ error: 'Title and slug are required' }, { status: 400 })
     }
-
     const category = await prisma.category.create({
       data: { title, slug, parentId: parentId || null },
     })
     return NextResponse.json(category)
   } catch (err: any) {
-    // Prisma unique constraint error
     if (err?.code === 'P2002') {
       return NextResponse.json({ error: 'Slug must be unique' }, { status: 409 })
     }
-    // Foreign key (bad parentId) or other DB errors
     return NextResponse.json({ error: err?.message || 'Failed to create category' }, { status: 500 })
   }
 }
 
+// READ (tree)
 export async function GET() {
-  // Always read fresh
-  const categories = await prisma.category.findMany()
-  const build = (parentId: string | null) =>
-    categories.filter(c => c.parentId === parentId).map(c => ({ ...c, children: build(c.id) }))
-  return NextResponse.json(build(null))
+  const categories: DbCategory[] = await prisma.category.findMany({
+    select: { id: true, title: true, slug: true, parentId: true },
+    orderBy: { title: 'asc' },
+  })
+
+  function build(parentId: string | null): TreeCategory[] {
+    return categories
+      .filter(c => c.parentId === parentId)
+      .map<TreeCategory>(c => ({
+        ...c,
+        children: build(c.id),
+      }))
+  }
+
+  const tree = build(null)
+  return NextResponse.json(tree)
 }
 
+// UPDATE
 export async function PUT(req: NextRequest) {
   try {
     const { id, title, slug, parentId } = await req.json()
@@ -42,7 +62,11 @@ export async function PUT(req: NextRequest) {
 
     const category = await prisma.category.update({
       where: { id },
-      data: { title, slug, parentId: parentId ?? undefined },
+      data: {
+        ...(title !== undefined ? { title } : {}),
+        ...(slug !== undefined ? { slug } : {}),
+        ...(parentId !== undefined ? { parentId } : {}),
+      },
     })
     return NextResponse.json(category)
   } catch (err: any) {
@@ -53,15 +77,14 @@ export async function PUT(req: NextRequest) {
   }
 }
 
+// DELETE
 export async function DELETE(req: NextRequest) {
   try {
     const { id } = await req.json()
     if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
-
     await prisma.category.delete({ where: { id } })
     return NextResponse.json({ success: true })
   } catch (err: any) {
-    // If there are children referencing this category, this may fail
     return NextResponse.json({ error: err?.message || 'Failed to delete category' }, { status: 500 })
   }
 }
