@@ -15,16 +15,25 @@ type TreeCategory = DbCategory & {
   children: TreeCategory[]
 }
 
-// CREATE
+/* ======================
+   CREATE
+====================== */
 export async function POST(req: NextRequest) {
   try {
-    const { title, slug, parentId } = await req.json()
+    const { title, slug, parentId } = (await req.json()) as {
+      title?: string
+      slug?: string
+      parentId?: string | null
+    }
+
     if (!title || !slug) {
       return NextResponse.json({ error: 'Title and slug are required' }, { status: 400 })
     }
+
     const category = await prisma.category.create({
-      data: { title, slug, parentId: parentId || null },
+      data: { title, slug, parentId: parentId ?? null },
     })
+
     return NextResponse.json(category)
   } catch (err: any) {
     if (err?.code === 'P2002') {
@@ -34,7 +43,9 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// READ (tree)
+/* ======================
+   READ (TREE)
+====================== */
 export async function GET() {
   const categories: DbCategory[] = await prisma.category.findMany({
     select: { id: true, title: true, slug: true, parentId: true },
@@ -43,8 +54,8 @@ export async function GET() {
 
   function build(parentId: string | null): TreeCategory[] {
     return categories
-      .filter(c => c.parentId === parentId)
-      .map<TreeCategory>(c => ({
+      .filter((c) => c.parentId === parentId)
+      .map<TreeCategory>((c) => ({
         ...c,
         children: build(c.id),
       }))
@@ -54,10 +65,18 @@ export async function GET() {
   return NextResponse.json(tree)
 }
 
-// UPDATE
+/* ======================
+   UPDATE
+====================== */
 export async function PUT(req: NextRequest) {
   try {
-    const { id, title, slug, parentId } = await req.json()
+    const { id, title, slug, parentId } = (await req.json()) as {
+      id?: string
+      title?: string
+      slug?: string
+      parentId?: string | null
+    }
+
     if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
 
     const category = await prisma.category.update({
@@ -68,6 +87,7 @@ export async function PUT(req: NextRequest) {
         ...(parentId !== undefined ? { parentId } : {}),
       },
     })
+
     return NextResponse.json(category)
   } catch (err: any) {
     if (err?.code === 'P2002') {
@@ -77,11 +97,14 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-// DELETE
+/* ======================
+   DELETE
+====================== */
 export async function DELETE(req: NextRequest) {
   try {
-    const { id } = await req.json()
+    const { id } = (await req.json()) as { id?: string }
     if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
+
     await prisma.category.delete({ where: { id } })
     return NextResponse.json({ success: true })
   } catch (err: any) {
