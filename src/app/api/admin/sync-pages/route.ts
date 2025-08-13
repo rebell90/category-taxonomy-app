@@ -1,30 +1,30 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+// src/app/api/admin/sync-pages/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { shopifyAdminGraphQL, findPageIdByHandle } from '@/lib/shopify'
 
 export const dynamic = 'force-dynamic'
 
-// ----------------- GraphQL mutations -----------------
+// ✅ Correct Admin GraphQL mutations (note: $page, not $input)
 const CREATE_PAGE = /* GraphQL */ `
-  mutation CreatePage($input: PageInput!) {
-    pageCreate(page: $input) {
+  mutation CreatePage($page: PageCreateInput!) {
+    pageCreate(page: $page) {
       page { id handle title templateSuffix }
-      userErrors { field message }
+      userErrors { field message code }
     }
   }
 `
 
 const UPDATE_PAGE = /* GraphQL */ `
-  mutation UpdatePage($id: ID!, $input: PageInput!) {
-    pageUpdate(id: $id, page: $input) {
+  mutation UpdatePage($id: ID!, $page: PageUpdateInput!) {
+    pageUpdate(id: $id, page: $page) {
       page { id handle title templateSuffix }
-      userErrors { field message }
+      userErrors { field message code }
     }
   }
 `
 
-// ----------------- Types -----------------
 type DbCategory = {
   id: string
   title: string
@@ -34,7 +34,6 @@ type DbCategory = {
 
 type FlatCat = { title: string; slug: string }
 
-// ----------------- Utils -----------------
 function authOK(req: NextRequest): boolean {
   const q = req.nextUrl.searchParams.get('secret')
   const h = req.headers.get('x-backfill-secret')
@@ -63,7 +62,7 @@ function flattenCategories(rows: DbCategory[]): FlatCat[] {
   return out
 }
 
-// ----------------- GET: preview -----------------
+// ---- Preview
 export async function GET(req: NextRequest) {
   if (!authOK(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   try {
@@ -75,20 +74,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       totalCategories: flat.length,
       sample: flat.slice(0, 20),
-      hint: 'POST this same URL to create/update Shopify Pages for every category (template: page.category).',
+      hint: 'POST this URL to upsert Shopify pages with template page.category',
     })
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || 'Failed to load categories' }, { status: 500 })
   }
 }
 
-// ----------------- POST: create/update all pages -----------------
+// ---- Upsert all pages
 export async function POST(req: NextRequest) {
   if (!authOK(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  // Optional flags
   const createOnly = req.nextUrl.searchParams.get('createOnly') === '1'
-  const templateSuffix = 'category' // use page.category.json template
+  const templateSuffix = 'category' // uses templates/page.category.json
 
   try {
     const rows = await prisma.category.findMany({
@@ -113,16 +111,16 @@ export async function POST(req: NextRequest) {
           if (createOnly) {
             results.push({ slug, action: 'skip (exists)', ok: true, id: existingId })
           } else {
-            // Update (title + template)
+            // UPDATE with PageUpdateInput
             const data = await shopifyAdminGraphQL<{
-              pageUpdate: { page: { id: string } | null; userErrors: { field: string[] | null; message: string }[] }
+              pageUpdate: { page: { id: string } | null; userErrors: { field: string[] | null; message: string; code?: string }[] }
             }>(UPDATE_PAGE, {
               id: existingId,
-              input: {
+              page: {
                 title,
                 templateSuffix,
-                // Optional: put minimal bodyHtml; template will render anyway
-                bodyHtml: '',
+                body: '', // optional; section template renders the UI
+                // isPublished: true, // uncomment if you want to force publish
               },
             })
             const errs = data.pageUpdate.userErrors
@@ -133,15 +131,16 @@ export async function POST(req: NextRequest) {
             }
           }
         } else {
-          // Create
+          // CREATE with PageCreateInput
           const data = await shopifyAdminGraphQL<{
-            pageCreate: { page: { id: string } | null; userErrors: { field: string[] | null; message: string }[] }
+            pageCreate: { page: { id: string } | null; userErrors: { field: string[] | null; message: string; code?: string }[] }
           }>(CREATE_PAGE, {
-            input: {
+            page: {
               title,
-              handle: slug, // creates /pages/<slug>
-              templateSuffix,
-              bodyHtml: '',
+              handle: slug,     // becomes /pages/<slug>
+              isPublished: true, // publish immediately
+              templateSuffix,    // "category"
+              body: '',
             },
           })
           const errs = data.pageCreate.userErrors
@@ -152,12 +151,11 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Gentle pacing (Shopify rate limits)
-        await sleep(120)
+        await sleep(120) // gentle pacing for Shopify rate limits
       } catch (inner: any) {
         results.push({
           slug,
-          action: (existingActionFor(results, slug) ?? 'create') as any,
+          action: 'create',
           ok: false,
           errors: inner?.message || String(inner),
         })
@@ -177,11 +175,4 @@ export async function POST(req: NextRequest) {
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || 'Sync failed' }, { status: 500 })
   }
-}
-
-function existingActionFor(
-  results: Array<{ slug: string; action: string; ok: boolean }>,
-  slug: string
-): 'create' | 'update' | 'skip (exists)' | undefined {
-  return [...results].reverse().find((r) => r.slug === slug)?.action as any
 }
