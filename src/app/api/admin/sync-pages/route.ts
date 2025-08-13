@@ -5,8 +5,8 @@ import { shopifyAdminGraphQL } from '@/lib/shopify'
 
 export const dynamic = 'force-dynamic'
 
-// GraphQL: find pages by handle (via query search)
-const FIND_PAGES = `
+/** ======= GraphQL ======= */
+const FIND_PAGES = /* GraphQL */ `
   query FindPages($q: String!, $first: Int!) {
     pages(first: $first, query: $q) {
       edges {
@@ -16,7 +16,7 @@ const FIND_PAGES = `
   }
 `
 
-const CREATE_PAGE = `
+const CREATE_PAGE = /* GraphQL */ `
   mutation CreatePage($input: PageInput!) {
     pageCreate(page: $input) {
       page { id handle title templateSuffix }
@@ -25,7 +25,7 @@ const CREATE_PAGE = `
   }
 `
 
-const UPDATE_PAGE = `
+const UPDATE_PAGE = /* GraphQL */ `
   mutation UpdatePage($id: ID!, $input: PageInput!) {
     pageUpdate(id: $id, page: $input) {
       page { id handle title templateSuffix }
@@ -34,131 +34,190 @@ const UPDATE_PAGE = `
   }
 `
 
-function flattenTree(nodes: any[]): { title: string; slug: string }[] {
-  const out: { title: string; slug: string }[] = []
-  const walk = (n: any[]) => {
-    for (const node of n) {
-      out.push({ title: node.title, slug: node.slug })
-      if (node.children?.length) walk(node.children)
+/** ======= Types ======= */
+type DbCategory = {
+  id: string
+  title: string
+  slug: string
+  parentId: string | null
+}
+type FlatCat = { title: string; slug: string }
+
+type FindPagesResp = {
+  pages: {
+    edges: { node: { id: string; handle: string; title: string; templateSuffix: string | null } }[]
+  }
+}
+type CreatePageResp = {
+  pageCreate: {
+    page: { id: string; handle: string; title: string; templateSuffix: string | null } | null
+    userErrors: { field: string[] | null; message: string }[]
+  }
+}
+type UpdatePageResp = {
+  pageUpdate: {
+    page: { id: string; handle: string; title: string; templateSuffix: string | null } | null
+    userErrors: { field: string[] | null; message: string }[]
+  }
+}
+
+/** ======= Utils ======= */
+function ensureSecret(req: NextRequest): boolean {
+  const header = req.headers.get('x-backfill-secret')
+  const query = req.nextUrl.searchParams.get('secret')
+  const secret = process.env.BACKFILL_SECRET
+  return Boolean(secret && (header === secret || query === secret))
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+async function findPageByHandle(handle: string) {
+  const data = await shopifyAdminGraphQL<FindPagesResp>(FIND_PAGES, { q: `handle:${handle}`, first: 1 })
+  return data.pages.edges[0]?.node ?? null
+}
+
+async function createPage(input: {
+  title: string
+  handle: string
+  published?: boolean
+  templateSuffix?: string | null
+  bodyHtml?: string
+}) {
+  const data = await shopifyAdminGraphQL<CreatePageResp>(CREATE_PAGE, { input })
+  const errs = data.pageCreate.userErrors
+  if (errs?.length) throw new Error('pageCreate ' + JSON.stringify(errs))
+  return data.pageCreate.page
+}
+
+async function updatePage(id: string, input: Partial<{ title: string; handle: string; templateSuffix: string | null; bodyHtml: string }>) {
+  const data = await shopifyAdminGraphQL<UpdatePageResp>(UPDATE_PAGE, { id, input })
+  const errs = data.pageUpdate.userErrors
+  if (errs?.length) throw new Error('pageUpdate ' + JSON.stringify(errs))
+  return data.pageUpdate.page
+}
+
+function flattenTree(rows: DbCategory[]): FlatCat[] {
+  // Build adjacency
+  const byParent = new Map<string | null, DbCategory[]>()
+  for (const r of rows) {
+    const key = r.parentId ?? null
+    if (!byParent.has(key)) byParent.set(key, [])
+    byParent.get(key)!.push(r)
+  }
+  // Recursive walk
+  const out: FlatCat[] = []
+  const walk = (parentId: string | null) => {
+    for (const n of byParent.get(parentId) || []) {
+      out.push({ title: n.title, slug: n.slug })
+      walk(n.id)
     }
   }
-  walk(nodes)
+  walk(null)
   return out
 }
 
+/** ======= GET: preview what will be created/updated ======= */
 export async function GET(req: NextRequest) {
-  // Preview: list which pages would be created/updated
-  const auth = req.headers.get('x-backfill-secret') || req.nextUrl.searchParams.get('secret')
-  if (!auth || auth !== process.env.Backfill_SECRET && auth !== process.env.BACKFILL_SECRET) {
+  if (!ensureSecret(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-
-  const rows = await prisma.category.findMany({
-    select: { id: true, title: true, slug: true, parentId: true },
-  })
-
-  // build simple tree -> then flatten to [{title,slug}]
-  const byParent = new Map<string|null, any[]>()
-  for (const r of rows) {
-    const key = r.parentId ?? null
-    if (!byParent.has(key)) byParent.set(key, [])
-    byParent.get(key)!.push({ id: r.id, title: r.title, slug: r.slug, children: [] })
+  try {
+    const rows = await prisma.category.findMany({
+      select: { id: true, title: true, slug: true, parentId: true },
+      orderBy: { title: 'asc' },
+    })
+    const flat = flattenTree(rows)
+    return NextResponse.json({
+      categories: flat.length,
+      sample: flat.slice(0, 25),
+      hint: 'POST this same URL to create/update pages. Pages will be /pages/<slug> using template "category".',
+    })
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || 'Failed to load categories' }, { status: 500 })
   }
-  const linkChildren = (parentId: string|null): any[] =>
-    (byParent.get(parentId) || []).map(n => ({ ...n, children: linkChildren(n.id) }))
-
-  const tree = linkChildren(null)
-  const flat = flattenTree(tree)
-
-  return NextResponse.json({
-    categories: flat.length,
-    sample: flat.slice(0, 25),
-    hint: 'POST this same URL to create/update pages. Pages will be /pages/<slug> and use template "category".'
-  })
 }
 
+/** ======= POST: create/update pages for all categories ======= */
 export async function POST(req: NextRequest) {
-  const auth = req.headers.get('x-backfill-secret') || req.nextUrl.searchParams.get('secret')
-  if (!auth || auth !== process.env.Backfill_SECRET && auth !== process.env.BACKFILL_SECRET) {
+  if (!ensureSecret(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // optional: only create (skip updates)
   const createOnly = req.nextUrl.searchParams.get('createOnly') === '1'
+  const templateSuffix = 'category' // change if your template is named differently
 
-  // load full tree to get every slug
-  const rows = await prisma.category.findMany({
-    select: { id: true, title: true, slug: true, parentId: true },
-  })
-  const byParent = new Map<string|null, any[]>()
-  for (const r of rows) {
-    const key = r.parentId ?? null
-    if (!byParent.has(key)) byParent.set(key, [])
-    byParent.get(key)!.push({ id: r.id, title: r.title, slug: r.slug, children: [] })
-  }
-  const linkChildren = (parentId: string|null): any[] =>
-    (byParent.get(parentId) || []).map(n => ({ ...n, children: linkChildren(n.id) }))
-  const flat = flattenTree(linkChildren(null))
-
-  const results: any[] = []
-
-  for (const { title, slug } of flat) {
-    // 1) does a page exist with this handle?
-    const find = await shopifyAdminGraphQL(FIND_PAGES, {
-      q: `handle:${slug}`,
-      first: 1,
+  try {
+    const rows = await prisma.category.findMany({
+      select: { id: true, title: true, slug: true, parentId: true },
+      orderBy: { title: 'asc' },
     })
-    const existing = (find as any)?.pages?.edges?.[0]?.node ?? null
+    const flat = flattenTree(rows)
 
-    if (!existing) {
-      // 2) create it
-      const input = {
-        title,
-        handle: slug,           // results in /pages/<slug>
-        published: true,
-        templateSuffix: 'category', // uses page.category.json template
-        bodyHtml: '',           // optional
-        // seo: { title, description: ... } // optional
-      }
-      const created = await shopifyAdminGraphQL(CREATE_PAGE, { input })
-      const errs = (created as any)?.pageCreate?.userErrors
-      if (errs?.length) {
-        results.push({ slug, action: 'create', ok: false, errors: errs })
-      } else {
-        const page = (created as any)?.pageCreate?.page
-        results.push({ slug, action: 'create', ok: true, id: page?.id })
-      }
-    } else {
-      // 3) update (title/template) unless createOnly mode
-      if (createOnly) {
-        results.push({ slug, action: 'skip (exists)', ok: true, id: existing.id })
-      } else {
-        const input = {
-          title,
-          handle: slug,
-          templateSuffix: 'category',
-          // bodyHtml: existing.bodyHtml // leave as-is unless you want to overwrite
-        }
-        const updated = await shopifyAdminGraphQL(UPDATE_PAGE, { id: existing.id, input })
-        const errs = (updated as any)?.pageUpdate?.userErrors
-        if (errs?.length) {
-          results.push({ slug, action: 'update', ok: false, errors: errs })
+    const results: Array<
+      | { slug: string; action: 'create'; ok: true; id: string }
+      | { slug: string; action: 'create'; ok: false; errors: string }
+      | { slug: string; action: 'update'; ok: true; id: string }
+      | { slug: string; action: 'update'; ok: false; errors: string }
+      | { slug: string; action: 'skip (exists)'; ok: true; id: string }
+    > = []
+
+    for (const { title, slug } of flat) {
+      try {
+        const existing = await findPageByHandle(slug)
+
+        if (!existing) {
+          const created = await createPage({
+            title,
+            handle: slug, // results in /pages/<slug>
+            published: true,
+            templateSuffix,
+            bodyHtml: '', // optional
+          })
+          results.push({ slug, action: 'create', ok: true, id: created!.id })
+        } else if (createOnly) {
+          results.push({ slug, action: 'skip (exists)', ok: true, id: existing.id })
         } else {
-          const page = (updated as any)?.pageUpdate?.page
-          results.push({ slug, action: 'update', ok: true, id: page?.id })
+          const updated = await updatePage(existing.id, {
+            title,
+            handle: slug,
+            templateSuffix,
+          })
+          results.push({ slug, action: 'update', ok: true, id: updated!.id })
         }
+
+        // Gentle pacing to avoid throttling (adjust if needed)
+        await sleep(150)
+      } catch (inner: any) {
+        results.push({
+          slug,
+          action: existingActionFor(results, slug) ?? ('create' as any),
+          ok: false,
+          errors: inner?.message || String(inner),
+        })
+        await sleep(150)
       }
     }
-  }
 
-  return NextResponse.json({
-    totalCategories: flat.length,
-    summary: {
-      created: results.filter(r => r.action === 'create' && r.ok).length,
-      updated: results.filter(r => r.action === 'update' && r.ok).length,
-      skipped: results.filter(r => r.action.includes('skip')).length,
-      failures: results.filter(r => r.ok === false).length,
-    },
-    details: results.slice(0, 50) // trim if noisy
-  })
+    const summary = {
+      totalCategories: flat.length,
+      created: results.filter((r) => r.action === 'create' && r.ok).length,
+      updated: results.filter((r) => r.action === 'update' && r.ok).length,
+      skipped: results.filter((r) => r.action === 'skip (exists)').length,
+      failures: results.filter((r) => r.ok === false).length,
+    }
+
+    return NextResponse.json({ summary, details: results.slice(0, 200) })
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || 'Sync failed' }, { status: 500 })
+  }
+}
+
+/** Helper: best effort to label failure action */
+function existingActionFor(
+  results: Array<{ slug: string; action: string; ok: boolean }>
+, slug: string): 'create' | 'update' | 'skip (exists)' | undefined {
+  const last = [...results].reverse().find((r) => r.slug === slug)
+  return (last?.action as any) || undefined
 }
