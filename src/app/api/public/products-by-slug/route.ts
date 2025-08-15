@@ -2,15 +2,52 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { shopifyAdminGraphQL } from '@/lib/shopify'
 
-// CORS headers for Shopify theme fetch
-const cors = {
+// ---- Types for the Admin GraphQL response ----
+interface AdminVariantNode {
+  id: string
+  price: string // Admin returns a string amount
+}
+
+interface AdminVariantEdge {
+  node: AdminVariantNode
+}
+
+interface AdminVariantsConnection {
+  edges: AdminVariantEdge[]
+}
+
+interface AdminImage {
+  url: string
+  altText?: string | null
+}
+
+interface AdminProductNode {
+  id: string
+  handle: string
+  title: string
+  featuredImage?: AdminImage | null
+  variants: AdminVariantsConnection
+}
+
+interface AdminProductEdge {
+  node: AdminProductNode
+}
+
+interface ProductsByQueryData {
+  products: {
+    edges: AdminProductEdge[]
+  }
+}
+
+// ---- CORS headers for theme fetches ----
+const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 }
 
-export async function OPTIONS() {
-  return new Response(null, { headers: cors })
+export function OPTIONS() {
+  return new Response(null, { headers: corsHeaders })
 }
 
 /**
@@ -21,21 +58,23 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
     const slug = (searchParams.get('slug') || '').trim()
-    const limit = Math.min(parseInt(searchParams.get('limit') || '12', 10) || 12, 50)
+    const limitParam = searchParams.get('limit') || '12'
+    const limit = Math.min(Number.parseInt(limitParam, 10) || 12, 50)
 
     if (!slug) {
-      return NextResponse.json({ error: 'Missing slug' }, { status: 400, headers: cors })
+      return NextResponse.json(
+        { error: 'Missing slug' },
+        { status: 400, headers: corsHeaders },
+      )
     }
 
-    // Admin GraphQL search supports metafield query syntax
-    // We’ll try quoted and unquoted forms; use the first that returns results.
-    const queries = [
+    // Try quoted and unquoted admin search variants
+    const queries: string[] = [
       `metafield:taxonomy.category_slugs:"${slug.replace(/"/g, '\\"')}"`,
       `metafield:taxonomy.category_slugs=${slug}`,
     ]
 
-    // Admin GraphQL (use 2024-07+ in your helper)
-    const GQL = `
+    const GQL = /* GraphQL */ `
       query ProductsByQuery($q: String!, $first: Int!) {
         products(first: $first, query: $q) {
           edges {
@@ -53,35 +92,44 @@ export async function GET(req: NextRequest) {
       }
     `
 
-    let edges: any[] = []
+    let edges: AdminProductEdge[] = []
+
     for (const q of queries) {
-      const data = await shopifyAdminGraphQL<{ products: { edges: any[] } }>(GQL, { q, first: limit })
-      edges = data?.products?.edges || []
-      if (edges.length > 0) break
+      const data = await shopifyAdminGraphQL<ProductsByQueryData>(GQL, {
+        q,
+        first: limit,
+      })
+      const current = data?.products?.edges ?? []
+      if (current.length > 0) {
+        edges = current
+        break
+      }
     }
 
-    // Normalize to a storefront-like shape the theme code already expects
+    // Normalize to the “storefront-like” shape your theme expects
     const normalized = edges.map((e) => {
       const n = e.node
-      const priceNode = n.variants?.edges?.[0]?.node
+      const firstVariant = n.variants?.edges?.[0]?.node
       return {
         id: n.id,
         handle: n.handle,
         title: n.title,
-        featuredImage: n.featuredImage || null,
-        price: priceNode?.price ? parseFloat(priceNode.price) : null,
-        currencyCode: null, // Admin variant.price is amount only; if you need currency, query presentmentPrices or use Storefront later
+        featuredImage: n.featuredImage ?? null,
+        price: firstVariant?.price ? Number.parseFloat(firstVariant.price) : null,
+        // If you need currency, we can extend the query. For now, default to USD when present.
+        currencyCode: 'USD' as const,
       }
     })
 
+    return NextResponse.json({ products: normalized }, { headers: corsHeaders })
+  } catch (err: unknown) {
+    const message =
+      typeof err === 'object' && err && 'message' in err
+        ? String((err as { message: unknown }).message)
+        : String(err)
     return NextResponse.json(
-      { products: normalized },
-      { headers: cors }
-    )
-  } catch (err: any) {
-    return NextResponse.json(
-      { error: String(err?.message || err) },
-      { status: 500, headers: cors }
+      { error: message },
+      { status: 500, headers: corsHeaders },
     )
   }
 }
