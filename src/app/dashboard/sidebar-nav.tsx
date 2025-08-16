@@ -1,15 +1,14 @@
-// src/app/dashboard/sidebar-nav.tsx
 'use client'
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { cn } from '@/lib/ui' // tiny helper below; or inline classes
+import { cn } from '@/lib/ui'
 
 const links = [
   { href: '/dashboard', label: 'Overview' },
   { href: '/dashboard/audit', label: 'Products ↔ Categories Audit' },
   { href: '/dashboard/assign', label: 'Assign Products to Categories' },
-  { href: '/categories', label: 'Manage Category Tree' }, // if you want this in the same nav
+  { href: '/categories', label: 'Manage Category Tree' },
 ]
 
 export function SidebarNav() {
@@ -26,9 +25,8 @@ export function SidebarNav() {
                 href={link.href}
                 className={cn(
                   'block rounded px-3 py-2 text-sm',
-                  active
-                    ? 'bg-gray-100 font-medium text-gray-900'
-                    : 'text-gray-700 hover:bg-gray-50'
+                  active ? 'bg-gray-100 font-medium text-gray-900'
+                         : 'text-gray-700 hover:bg-gray-50'
                 )}
               >
                 {link.label}

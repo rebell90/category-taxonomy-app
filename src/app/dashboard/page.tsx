@@ -1,0 +1,23 @@
+export default function DashboardHome() {
+  return (
+    <div className="p-8 space-y-6">
+      <h1 className="text-2xl font-bold">Catalog Tools</h1>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <a href="/dashboard/audit" className="block border rounded-lg p-5 hover:shadow">
+          <div className="text-lg font-semibold">Products ↔ Categories Audit</div>
+          <p className="text-sm text-gray-600 mt-1">
+            See which products have <code>taxonomy.category_slugs</code> set. Filter/search/paginate.
+          </p>
+        </a>
+
+        <a href="/dashboard/assign" className="block border rounded-lg p-5 hover:shadow">
+          <div className="text-lg font-semibold">Assign Products to Categories</div>
+          <p className="text-sm text-gray-600 mt-1">
+            Link products to category slugs using your taxonomy.
+          </p>
+        </a>
+      </div>
+    </div>
+  );
+}

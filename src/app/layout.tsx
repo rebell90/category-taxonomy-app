@@ -27,6 +27,16 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        // inside <body> but above {children}
+<header className="border-b">
+  <div className="mx-auto max-w-6xl px-4 py-3 flex items-center gap-6">
+    <a href="/" className="font-semibold">Home</a>
+    <a href="/dashboard" className="text-gray-700 hover:underline">Dashboard</a>
+    <a href="/categories" className="text-gray-700 hover:underline">Categories</a>
+    <a href="/dashboard/assign" className="text-gray-700 hover:underline">Assign</a>
+    <a href="/dashboard/audit" className="text-gray-700 hover:underline">Audit</a>
+  </div>
+</header>
         {children}
       </body>
     </html>
