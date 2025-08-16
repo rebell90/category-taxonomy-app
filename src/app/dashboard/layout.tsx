@@ -22,9 +22,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       </aside>
 
       {/* Content */}
-      <main className="flex-1 p-8">
-        <div className="mx-auto max-w-6xl">{children}</div>
-      </main>
+  <main className="flex-1 p-8 dashboard">
+    <div className="mx-auto max-w-6xl">{children}</div>
+  </main>
     </div>
   )
 }
