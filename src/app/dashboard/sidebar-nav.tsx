@@ -6,7 +6,7 @@ import { cn } from '@/lib/ui'
 
 const links = [
   { href: '/dashboard', label: 'Overview' },
-  { href: '/dashboard/audit', label: 'Products ↔ Categories Audit' },
+  { href: '/dashboard/audit', label: 'Product + Category View' },
   { href: '/dashboard/assign', label: 'Assign Products to Categories' },
   { href: '/dashboard/categories', label: 'Manage Category Tree' },
 ]

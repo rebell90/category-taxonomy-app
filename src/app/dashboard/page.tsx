@@ -5,21 +5,21 @@ export default function DashboardHome() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <a href="/dashboard/audit" className="block border rounded-lg p-5 hover:shadow">
-          <div className="text-lg font-semibold">Products ↔ Categories Audit</div>
+          <div className="text-lg text-gray-600 font-semibold">Product + Category View</div>
           <p className="text-sm text-gray-600 mt-1">
             See which products have <code>taxonomy.category_slugs</code> set. Filter/search/paginate.
           </p>
         </a>
 
         <a href="/dashboard/assign" className="block border rounded-lg p-5 hover:shadow">
-          <div className="text-lg font-semibold">Assign Products to Categories</div>
+          <div className="text-lg text-gray-600 font-semibold">Assign Products to Categories</div>
           <p className="text-sm text-gray-600 mt-1">
             Link products to category slugs using your taxonomy.
           </p>
         </a>
 
         <a href="/dashboard/categories" className="block border rounded-lg p-5 hover:shadow">
-          <div className="text-lg font-semibold">Manage Category Tree</div>
+          <div className="text-lg text-gray-600 font-semibold">Manage Category Tree</div>
           <p className="text-sm text-gray-600 mt-1">
             Add, update, or delete categories and nested-subcategories.
           </p>

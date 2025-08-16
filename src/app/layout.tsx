@@ -20,7 +20,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <Link href="/dashboard" className="text-gray-700 hover:underline">Dashboard</Link>
             <Link href="/dashboard/categories" className="text-gray-700 hover:underline">Categories</Link>
             <Link href="/dashboard/assign" className="text-gray-700 hover:underline">Assign</Link>
-            <Link href="/dashboard/audit" className="text-gray-700 hover:underline">Audit</Link>
+            <Link href="/dashboard/audit" className="text-gray-700 hover:underline">Master View</Link>
           </div>
         </header>
 
