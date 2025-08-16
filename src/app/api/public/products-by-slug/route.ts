@@ -2,19 +2,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { shopifyAdminGraphQL } from '@/lib/shopify'
 
-// ---- Types for the Admin GraphQL response ----
+// -------- Types for the Admin GraphQL response --------
 interface AdminVariantNode {
   id: string
-  price: string // Admin returns a string amount
+  price: string // Admin returns price as a string
 }
-
-interface AdminVariantEdge {
-  node: AdminVariantNode
-}
-
-interface AdminVariantsConnection {
-  edges: AdminVariantEdge[]
-}
+interface AdminVariantEdge { node: AdminVariantNode }
+interface AdminVariantsConnection { edges: AdminVariantEdge[] }
 
 interface AdminImage {
   url: string
@@ -29,9 +23,7 @@ interface AdminProductNode {
   variants: AdminVariantsConnection
 }
 
-interface AdminProductEdge {
-  node: AdminProductNode
-}
+interface AdminProductEdge { node: AdminProductNode }
 
 interface ProductsByQueryData {
   products: {
@@ -39,7 +31,7 @@ interface ProductsByQueryData {
   }
 }
 
-// ---- CORS headers for theme fetches ----
+// -------- CORS (theme will call this from storefront) --------
 const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -52,7 +44,7 @@ export function OPTIONS() {
 
 /**
  * GET /api/public/products-by-slug?slug=<slug>&limit=12
- * Returns a storefront-friendly list of products that have metafield taxonomy.category_slugs = <slug>
+ * Returns products that have metafield taxonomy.category_slugs EXACTLY equal to <slug>.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -68,11 +60,9 @@ export async function GET(req: NextRequest) {
       )
     }
 
-    // Try quoted and unquoted admin search variants
-    const queries: string[] = [
-      `metafield:taxonomy.category_slugs:"${slug.replace(/"/g, '\\"')}"`,
-      `metafield:taxonomy.category_slugs=${slug}`,
-    ]
+    // Strict: exact match against the product metafield list
+    // (matches if ANY value in the list equals the slug)
+    const q = `metafield:taxonomy.category_slugs:"${slug.replace(/"/g, '\\"')}"`
 
     const GQL = /* GraphQL */ `
       query ProductsByQuery($q: String!, $first: Int!) {
@@ -92,21 +82,14 @@ export async function GET(req: NextRequest) {
       }
     `
 
-    let edges: AdminProductEdge[] = []
+    const data = await shopifyAdminGraphQL<ProductsByQueryData>(GQL, {
+      q,
+      first: limit,
+    })
 
-    for (const q of queries) {
-      const data = await shopifyAdminGraphQL<ProductsByQueryData>(GQL, {
-        q,
-        first: limit,
-      })
-      const current = data?.products?.edges ?? []
-      if (current.length > 0) {
-        edges = current
-        break
-      }
-    }
+    const edges = data?.products?.edges ?? []
 
-    // Normalize to the “storefront-like” shape your theme expects
+    // Normalize to what your theme expects
     const normalized = edges.map((e) => {
       const n = e.node
       const firstVariant = n.variants?.edges?.[0]?.node
@@ -116,8 +99,7 @@ export async function GET(req: NextRequest) {
         title: n.title,
         featuredImage: n.featuredImage ?? null,
         price: firstVariant?.price ? Number.parseFloat(firstVariant.price) : null,
-        // If you need currency, we can extend the query. For now, default to USD when present.
-        currencyCode: 'USD' as const,
+        currencyCode: 'USD' as const, // Extend the query if you need true currency
       }
     })
 
