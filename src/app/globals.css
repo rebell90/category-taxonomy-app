@@ -24,3 +24,22 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+.dashboard h1,
+.dashboard .h1 {
+  @apply text-3xl font-bold text-slate-900 tracking-tight;
+}
+
+.dashboard h2,
+.dashboard .h2 {
+  @apply text-2xl font-semibold text-slate-800 mt-6 mb-2;
+}
+
+.dashboard h3,
+.dashboard .h3 {
+  @apply text-xl font-medium text-slate-700 mt-4;
+}
+
+.dashboard p {
+  @apply text-slate-600 leading-relaxed;
+}

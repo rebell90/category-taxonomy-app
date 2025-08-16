@@ -17,6 +17,13 @@ export default function DashboardHome() {
             Link products to category slugs using your taxonomy.
           </p>
         </a>
+
+        <a href="/dashboard/categories" className="block border rounded-lg p-5 hover:shadow">
+          <div className="text-lg font-semibold">Manage Category Tree</div>
+          <p className="text-sm text-gray-600 mt-1">
+            Add, update, or delete categories and nested-subcategories.
+          </p>
+        </a>
       </div>
     </div>
   );
