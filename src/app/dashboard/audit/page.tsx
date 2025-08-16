@@ -69,7 +69,7 @@ export default function AuditPage() {
   }
 
   return (
-    <main className="p-6 space-y-6">
+    <main className="p-8 space-y-6">
       <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <h1 className="text-2xl font-bold">Products ↔ Categories Audit</h1>
         <div className="flex items-center gap-3">
