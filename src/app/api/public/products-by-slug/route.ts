@@ -1,117 +1,87 @@
-// src/app/api/public/products-by-slug/route.ts
 import { NextRequest, NextResponse } from 'next/server'
+import prisma from '@/lib/prisma'
 import { shopifyAdminGraphQL } from '@/lib/shopify'
 
-// -------- Types for the Admin GraphQL response --------
-interface AdminVariantNode {
-  id: string
-  price: string // Admin returns price as a string
-}
-interface AdminVariantEdge { node: AdminVariantNode }
-interface AdminVariantsConnection { edges: AdminVariantEdge[] }
-
-interface AdminImage {
-  url: string
-  altText?: string | null
-}
-
-interface AdminProductNode {
+type ProductLite = {
   id: string
   handle: string
   title: string
-  featuredImage?: AdminImage | null
-  variants: AdminVariantsConnection
+  image?: { src: string | null }
+  price?: string | null
 }
 
-interface AdminProductEdge { node: AdminProductNode }
-
-interface ProductsByQueryData {
-  products: {
-    edges: AdminProductEdge[]
-  }
+type NodesResp = {
+  nodes: Array<{
+    __typename: 'Product'
+    id: string
+    handle: string
+    title: string
+    images: { edges: Array<{ node: { src: string } }> }
+    priceRangeV2?: { minVariantPrice: { amount: string; currencyCode: string } }
+  } | null>
 }
 
-// -------- CORS (theme will call this from storefront) --------
-const corsHeaders: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-}
-
-export function OPTIONS() {
-  return new Response(null, { headers: corsHeaders })
-}
-
-/**
- * GET /api/public/products-by-slug?slug=<slug>&limit=12
- * Returns products that have metafield taxonomy.category_slugs EXACTLY equal to <slug>.
- */
 export async function GET(req: NextRequest) {
-  try {
-    const { searchParams } = new URL(req.url)
-    const slug = (searchParams.get('slug') || '').trim()
-    const limitParam = searchParams.get('limit') || '12'
-    const limit = Math.min(Number.parseInt(limitParam, 10) || 12, 50)
+  const url = new URL(req.url)
+  const slug = url.searchParams.get('slug')?.trim()
+  const limit = Math.max(1, Math.min(Number(url.searchParams.get('limit') || 24), 250))
 
-    if (!slug) {
-      return NextResponse.json(
-        { error: 'Missing slug' },
-        { status: 400, headers: corsHeaders },
-      )
-    }
+  if (!slug) {
+    return NextResponse.json({ error: 'Missing slug' }, { status: 400 })
+  }
 
-    // Strict: exact match against the product metafield list
-    // (matches if ANY value in the list equals the slug)
-    const q = `metafield:taxonomy.category_slugs:"${slug.replace(/"/g, '\\"')}"`
+  // 1) Find category
+  const cat = await prisma.category.findUnique({
+    where: { slug },
+    select: { id: true },
+  })
+  if (!cat) {
+    return NextResponse.json({ products: [] }, { status: 200 })
+  }
 
-    const GQL = /* GraphQL */ `
-      query ProductsByQuery($q: String!, $first: Int!) {
-        products(first: $first, query: $q) {
-          edges {
-            node {
-              id
-              handle
-              title
-              featuredImage { url altText }
-              variants(first: 1) {
-                edges { node { id price } }
-              }
-            }
-          }
+  // 2) Get linked product GIDs for this exact category
+  const links = await prisma.productCategory.findMany({
+    where: { categoryId: cat.id },
+    select: { productGid: true },
+    take: limit,
+  })
+  if (links.length === 0) {
+    return NextResponse.json({ products: [] }, { status: 200 })
+  }
+
+  // 3) Query Admin GraphQL nodes(ids:[]) to hydrate storefront info
+  const ids = links.map(l => l.productGid)
+
+  const GQL = `
+    query Nodes($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on Product {
+          id
+          handle
+          title
+          images(first: 1) { edges { node { src: url } } }
+          priceRangeV2 { minVariantPrice { amount currencyCode } }
         }
       }
-    `
+    }
+  `
+  const data = await shopifyAdminGraphQL<NodesResp>(GQL, { ids })
 
-    const data = await shopifyAdminGraphQL<ProductsByQueryData>(GQL, {
-      q,
-      first: limit,
-    })
-
-    const edges = data?.products?.edges ?? []
-
-    // Normalize to what your theme expects
-    const normalized = edges.map((e) => {
-      const n = e.node
-      const firstVariant = n.variants?.edges?.[0]?.node
+  const products: ProductLite[] = (data.nodes || [])
+    .filter((n): n is NonNullable<NodesResp['nodes'][number]> => !!n)
+    .map(n => {
+      const imgSrc = n.images?.edges?.[0]?.node?.src || null
+      const price = n.priceRangeV2
+        ? `${n.priceRangeV2.minVariantPrice.amount} ${n.priceRangeV2.minVariantPrice.currencyCode}`
+        : null
       return {
         id: n.id,
         handle: n.handle,
         title: n.title,
-        featuredImage: n.featuredImage ?? null,
-        price: firstVariant?.price ? Number.parseFloat(firstVariant.price) : null,
-        currencyCode: 'USD' as const, // Extend the query if you need true currency
+        image: { src: imgSrc },
+        price,
       }
     })
 
-    return NextResponse.json({ products: normalized }, { headers: corsHeaders })
-  } catch (err: unknown) {
-    const message =
-      typeof err === 'object' && err && 'message' in err
-        ? String((err as { message: unknown }).message)
-        : String(err)
-    return NextResponse.json(
-      { error: message },
-      { status: 500, headers: corsHeaders },
-    )
-  }
+  return NextResponse.json({ products })
 }
