@@ -148,7 +148,7 @@ export default function AuditPage() {
           <p className="text-slate-600 text-sm">Assign categories inline or filter to find unassigned products.</p>
         </div>
         <div className="flex items-center gap-3">
-          <label className="inline-flex items-center gap-2 text-sm">
+          <label className="inline-flex items-center gap-2 text-sm text-slate-900">
             <input
               type="checkbox"
               checked={onlyUnassigned}
@@ -177,7 +177,7 @@ export default function AuditPage() {
 
       <section className="border rounded-lg overflow-hidden bg-white">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-left">
+          <thead className="bg-slate-50 text-left font-semibold text-slate-900">
             <tr>
               <th className="p-3 w-[36%]">Product</th>
               <th className="p-3">Current Slugs</th>
@@ -228,7 +228,7 @@ export default function AuditPage() {
                   <div className="flex flex-col gap-2">
                     {/* Category dropdown */}
                     <select
-                      className="border rounded px-2 py-1"
+                      className="border-color-slate-500 border rounded px-2 py-1"
                       value={selectedSlugByProduct[r.id] || ''}
                       onChange={e =>
                         setSelectedSlugByProduct(prev => ({ ...prev, [r.id]: e.target.value }))
