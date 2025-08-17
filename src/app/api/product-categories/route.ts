@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { rebuildProductCategoryMetafield } from '@/lib/product-metafields'
 
+// test errors
+const log = (...args: unknown[]) => {
+  // Render/Next will show this in server logs
+  console.log('[product-categories]', ...args)
+}
+
 // --- helpers ---------------------------------------------------------------
 
 function normalizeProductGid(idOrGid: string): string {
@@ -81,8 +87,12 @@ Accepts ANY of the shapes below:
    { "productId": "gid://shopify/Product/123", "slugs": ["some-slug"] }
 */
 export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => ({} as Record<string, unknown>))
-
+  //const body = await req.json().catch(() => ({} as Record<string, unknown>))
+  const raw = await req.text()
+  log('POST raw body:', raw)
+  let body: any
+  try { body = JSON.parse(raw) } catch { body = {} }
+  log('POST parsed:', body)
   // Normalize product GID
   const rawProduct: string =
     (body as any).productGid ?? (body as any).productId ?? ''
@@ -145,8 +155,9 @@ or
   { "productId": "123", "slug": "exhaust-systems" }
 */
 export async function DELETE(req: NextRequest) {
-  const body = await req.json().catch(() => ({} as Record<string, unknown>))
-
+  //const body = await req.json().catch(() => ({} as Record<string, unknown>))
+  const raw = await req.text()
+  log('DELETE raw body:', raw)
   const rawProduct: string =
     (body as any).productGid ?? (body as any).productId ?? ''
   const productGid = normalizeProductGid(String(rawProduct || ''))

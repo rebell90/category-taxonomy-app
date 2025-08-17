@@ -129,7 +129,6 @@ export async function findPageIdByHandle(handle: string): Promise<string | null>
     if (!msg.includes("doesn't accept argument 'query'")) {
       // For other GraphQL errors, rethrow so callers can see them.
       // (If you'd rather always fall back, just comment out the throw.)
-      // eslint-disable-next-line no-unsafe-finally
       // return null; // alternative: swallow and fall through
       throw e;
     }
