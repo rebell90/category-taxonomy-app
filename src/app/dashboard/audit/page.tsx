@@ -163,7 +163,7 @@ export default function AuditPage() {
             onChange={e => setQ(e.target.value)}
           />
           <button
-            className="bg-gray-100 hover:bg-gray-200 border rounded px-3 py-2 text-sm"
+            className="bg-gray-100 hover:bg-gray-200 border-color-slate-900 border rounded px-3 py-2 text-sm text-slate-900"
             onClick={() => {
               setCursor(null)
               load(true)
