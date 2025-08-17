@@ -1,23 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { shopifyAdminGraphQL } from '@/lib/shopify'
 
+type ProductNode = {
+  id: string
+  title: string
+  handle: string
+  status?: string | null
+}
+
 type Edge = {
   cursor: string
-  node: {
-    id: string
-    title: string
-    handle: string
-    status?: string | null
+  node: ProductNode
+}
+
+type PageInfo = {
+  hasNextPage: boolean
+  endCursor: string | null
+}
+
+type Resp = {
+  products: {
+    edges: Edge[]
+    pageInfo: PageInfo
   }
 }
-type PageInfo = { hasNextPage: boolean; endCursor: string | null }
-type Resp = { products: { edges: Edge[]; pageInfo: PageInfo } }
 
 export async function GET(req: NextRequest) {
-  // Use req to avoid “unused var” warning; e.g., allow ?limit override
+  // Use req so it isn't "unused"; allow ?limit to override page size (max 250)
   const url = new URL(req.url)
   const limitParam = url.searchParams.get('limit')
-  const limit = Math.max(1, Math.min(Number(limitParam || 250), 250)) // cap to 250
+  const first = Math.max(1, Math.min(Number(limitParam || 250), 250))
 
   const GQL = `
     query Products($first: Int!, $after: String) {
@@ -35,11 +47,11 @@ export async function GET(req: NextRequest) {
   rows.push(['id', 'title', 'handle', 'status'].join(','))
 
   let after: string | null = null
-  const first = limit
 
-  // Paginate until done
-  for (;;) {
-    const data = await shopifyAdminGraphQL<Resp>(GQL, { first, after })
+  // paginate
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const data: Resp = await shopifyAdminGraphQL<Resp>(GQL, { first, after })
     const { edges, pageInfo } = data.products
 
     for (const e of edges) {
