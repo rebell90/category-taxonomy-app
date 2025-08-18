@@ -7,8 +7,9 @@ import { cn } from '@/lib/ui'
 const links = [
   { href: '/dashboard', label: 'Overview' },
   { href: '/dashboard/audit', label: 'Product + Category View' },
-  { href: '/dashboard/assign', label: 'Assign Products to Categories' },
+  { href: '/dashboard/tree', label: 'View Category Tree' },
   { href: '/dashboard/categories', label: 'Manage Category Tree' },
+  { href: '/dashboard/assign', label: 'Assign Products to Categories' },
 ]
 
 export function SidebarNav() {

@@ -11,10 +11,10 @@ export default function DashboardHome() {
           </p>
         </a>
 
-        <a href="/dashboard/assign" className="block border rounded-lg p-5 hover:shadow">
-          <div className="text-lg text-gray-600 font-semibold">Assign Products to Categories</div>
+        <a href="/dashboard/tree" className="block border rounded-lg p-5 hover:shadow">
+          <div className="text-lg text-gray-600 font-semibold">View Category Tree</div>
           <p className="text-sm text-gray-600 mt-1">
-            Link products to category slugs using your taxonomy.
+            Tree-view of category taxonomy.
           </p>
         </a>
 
@@ -22,6 +22,13 @@ export default function DashboardHome() {
           <div className="text-lg text-gray-600 font-semibold">Manage Category Tree</div>
           <p className="text-sm text-gray-600 mt-1">
             Add, update, or delete categories and nested-subcategories.
+          </p>
+        </a>
+
+        <a href="/dashboard/assign" className="block border rounded-lg p-5 hover:shadow">
+          <div className="text-lg text-gray-600 font-semibold">Assign Products to Categories</div>
+          <p className="text-sm text-gray-600 mt-1">
+            Link products to category slugs using your taxonomy.
           </p>
         </a>
       </div>
