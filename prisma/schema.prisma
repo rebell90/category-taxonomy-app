@@ -17,6 +17,8 @@ model Category {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   products  ProductCategory[] 
+  image       String?   // image URL
+  description String?   // optional blurb
 }
 
 model ProductCategory {
