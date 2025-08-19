@@ -1,399 +1,292 @@
+// /src/app/categories/page.tsx
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 type Category = {
   id: string
   title: string
   slug: string
   parentId: string | null
-  image?: string | null
-  description?: string | null
+  image: string | null
+  description: string | null
   children?: Category[]
 }
 
-type CategoryNode = Category & { children?: CategoryNode[] }
-
-const slugify = (s: string) =>
-  s
-    .trim()
-    .toLowerCase()
-    .replace(/\s*&\s*/g, '-')      // "Merch & Apparel" -> "merch-apparel"
-    .replace(/[\s_]+/g, '-')       // spaces/underscores -> dashes
-    .replace(/[^a-z0-9-]/g, '')    // remove non-url chars
-    .replace(/--+/g, '-')          // collapse multiple dashes
-    .replace(/^-+|-+$/g, '')       // trim dashes
-
 export default function CategoriesPage() {
-  const [categories, setCategories] = useState<CategoryNode[]>([])
-  const [filter, setFilter] = useState('')
+  const [tree, setTree] = useState<Category[]>([])
+  const [flat, setFlat] = useState<Category[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  // form state
-  const [editing, setEditing] = useState<CategoryNode | null>(null)
   const [title, setTitle] = useState('')
   const [slug, setSlug] = useState('')
   const [parentId, setParentId] = useState<string | null>(null)
-  const [image, setImage] = useState('')
-  const [description, setDescription] = useState('')
+  const [image, setImage] = useState<string>('')
+  const [description, setDescription] = useState<string>('')
 
-  // expand/collapse state for tree (persist per session)
-  const [open, setOpen] = useState<Record<string, boolean>>(() => {
-    if (typeof window === 'undefined') return {}
+  const [editing, setEditing] = useState<Category | null>(null)
+
+  const loadCategories = useCallback(async () => {
+    setLoading(true)
+    setError(null)
     try {
-      return JSON.parse(sessionStorage.getItem('cat_open') || '{}') as Record<string, boolean>
-    } catch {
-      return {}
+      const res = await fetch('/api/categories', { cache: 'no-store' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data: Category[] = await res.json()
+      setTree(data)
+
+      // Build a flattened array for the parent dropdown
+      const accumulate = (nodes: Category[], out: Category[] = [], level = 0): Category[] => {
+        nodes.forEach((n) => {
+          out.push({ ...n, title: `${'— '.repeat(level)}${n.title}` })
+          if (n.children?.length) accumulate(n.children, out, level + 1)
+        })
+        return out
+      }
+      setFlat(accumulate(data, []))
+    } catch (e) {
+      console.error(e)
+      setError('Failed to load categories')
+    } finally {
+      setLoading(false)
     }
-  })
-
-  useEffect(() => {
-    sessionStorage.setItem('cat_open', JSON.stringify(open))
-  }, [open])
-
-  async function loadCategories() {
-    const res = await fetch('/api/categories', { cache: 'no-store' })
-    const data = (await res.json()) as CategoryNode[]
-    setCategories(data)
-  }
+  }, [])
 
   useEffect(() => {
     loadCategories()
-  }, [])
+  }, [loadCategories])
 
-  // Auto-slug (don’t override while editing existing slug manually)
+  // Auto-slugify from title (with & → -, multi-dash collapse)
   useEffect(() => {
-    if (editing) return
-    setSlug(slugify(title))
+    if (editing) return // do not autoslug while editing unless user types
+    const s = title
+      .toLowerCase()
+      .trim()
+      .replace(/&/g, '-')      // replace & with dash
+      .replace(/\s+/g, '-')    // spaces to dashes
+      .replace(/[^a-z0-9-]/g, '')
+      .replace(/-+/g, '-')     // collapse dashes
+    setSlug(s)
   }, [title, editing])
 
   const resetForm = () => {
-    setEditing(null)
     setTitle('')
     setSlug('')
     setParentId(null)
     setImage('')
     setDescription('')
+    setEditing(null)
   }
 
-  // Flatten categories for Parent dropdown (with indent)
-  const flatCategories = useMemo(() => {
-    const out: CategoryNode[] = []
-    const walk = (nodes: CategoryNode[], depth = 0) => {
-      nodes.forEach(n => {
-        out.push({ ...n, title: `${'— '.repeat(depth)}${n.title}` })
-        if (n.children?.length) walk(n.children, depth + 1)
-      })
-    }
-    walk(categories)
-    return out
-  }, [categories])
-
-  // Filtered tree
-  const filteredTree = useMemo(() => {
-    const q = filter.trim().toLowerCase()
-    if (!q) return categories
-    const match = (n: CategoryNode): boolean =>
-      n.title.toLowerCase().includes(q) || n.slug.toLowerCase().includes(q)
-    const walk = (nodes: CategoryNode[]): CategoryNode[] =>
-      nodes
-        .map(n => {
-          const kids = n.children ? walk(n.children) : []
-          if (match(n) || kids.length) {
-            return { ...n, children: kids }
-          }
-          return null
-        })
-        .filter(Boolean) as CategoryNode[]
-    return walk(categories)
-  }, [categories, filter])
-
-  const onSubmitCreate = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setError(null)
+
     const payload = {
-      title,
-      slug,
-      parentId,
-      image: image || null,
-      description: description || null,
+      title: title.trim(),
+      slug: slug.trim(),
+      parentId: parentId || null,
+      image: image.trim() || null,
+      description: description.trim() || null,
     }
-    const res = await fetch('/api/categories', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-    if (res.ok) {
+
+    try {
+      const res = await fetch('/api/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) throw new Error(`Create failed: ${await res.text()}`)
       await loadCategories()
       resetForm()
-    } else {
-      const err = await res.json().catch(() => ({}))
-      alert('Create failed: ' + (err?.error || res.statusText))
+    } catch (e) {
+      console.error(e)
+      setError('Create failed')
     }
   }
 
-  const onSubmitUpdate = async (e: React.FormEvent) => {
+  const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!editing) return
+    setError(null)
+
     const payload = {
       id: editing.id,
-      title,
-      slug,
-      image: image || null,
-      description: description || null,
+      title: title.trim(),
+      slug: slug.trim(),
+      // parentId not editable while editing in this simple UI; keep current
+      parentId: editing.parentId,
+      image: image.trim() || null,
+      description: description.trim() || null,
     }
-    const res = await fetch('/api/categories', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-    if (res.ok) {
+
+    try {
+      const res = await fetch('/api/categories', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) throw new Error(`Update failed: ${await res.text()}`)
       await loadCategories()
       resetForm()
-    } else {
-      const err = await res.json().catch(() => ({}))
-      alert('Update failed: ' + (err?.error || res.statusText))
+    } catch (e) {
+      console.error(e)
+      setError('Update failed')
     }
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this category?')) return
-    const res = await fetch('/api/categories', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id }),
-    })
-    if (res.ok) {
+    setError(null)
+    try {
+      const res = await fetch('/api/categories', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+      if (!res.ok) throw new Error(`Delete failed: ${await res.text()}`)
       await loadCategories()
-    } else {
-      const err = await res.json().catch(() => ({}))
-      alert('Delete failed: ' + (err?.error || res.statusText))
+      if (editing?.id === id) resetForm()
+    } catch (e) {
+      console.error(e)
+      setError('Delete failed')
     }
   }
 
-  const startEdit = (cat: CategoryNode) => {
+  const beginEdit = (cat: Category) => {
     setEditing(cat)
     setTitle(cat.title)
     setSlug(cat.slug)
-    setParentId(null) // lock parent during edit (simpler/safer)
-    setImage(cat.image || '')
-    setDescription(cat.description || '')
+    setParentId(cat.parentId)
+    setImage(cat.image ?? '')
+    setDescription(cat.description ?? '')
   }
 
-  const toggleOpen = (id: string) => setOpen(prev => ({ ...prev, [id]: !prev[id] }))
+  const renderTree = (nodes: Category[]) => (
+    <ul className="ml-4 list-disc space-y-1">
+      {nodes.map((cat) => (
+        <li key={cat.id}>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-gray-900">{cat.title}</span>
+            <span className="text-xs text-gray-600">/ {cat.slug}</span>
+            {cat.image && <span className="text-xs text-gray-600">(img)</span>}
+            <button
+              onClick={() => beginEdit(cat)}
+              className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+            >
+              Edit
+            </button>
+            <button
+              onClick={() => handleDelete(cat.id)}
+              className="text-xs px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700"
+            >
+              Delete
+            </button>
+          </div>
+          {cat.children && cat.children.length > 0 && renderTree(cat.children)}
+        </li>
+      ))}
+    </ul>
+  )
 
-  const Tree = ({ nodes }: { nodes: CategoryNode[] }) => {
-    if (!nodes?.length) return null
-    return (
-      <ul className="space-y-1">
-        {nodes.map(n => {
-          const hasKids = !!n.children?.length
-          const isOpen = open[n.id] ?? true
-          return (
-            <li key={n.id}>
-              <div className="group flex items-start gap-2 rounded-md px-2 py-1 hover:bg-slate-50">
-                {hasKids ? (
-                  <button
-                    onClick={() => toggleOpen(n.id)}
-                    className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded border text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    aria-label={isOpen ? 'Collapse' : 'Expand'}
-                    title={isOpen ? 'Collapse' : 'Expand'}
-                  >
-                    <span className="text-xs">{isOpen ? '−' : '+'}</span>
-                  </button>
-                ) : (
-                  <span className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded border border-transparent text-slate-300">•</span>
-                )}
-
-                <div className="flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold text-slate-900">{n.title}</span>
-                    <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">/{n.slug}</span>
-                    {n.image ? <span className="text-xs text-slate-500">🖼️</span> : null}
-                  </div>
-                  {n.description ? (
-                    <p className="mt-0.5 text-sm leading-snug text-slate-700">{n.description}</p>
-                  ) : null}
-
-                  <div className="mt-1 flex gap-3">
-                    <button
-                      onClick={() => startEdit(n)}
-                      className="text-sm font-medium text-blue-700 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDelete(n.id)}
-                      className="text-sm font-medium text-red-700 hover:underline focus:outline-none focus:ring-2 focus:ring-rose-500"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {hasKids && isOpen ? (
-                <div className="ml-6 border-l border-slate-200 pl-4">
-                  <Tree nodes={n.children!} />
-                </div>
-              ) : null}
-            </li>
-          )
-        })}
-      </ul>
-    )
-  }
+  const parentOptions = useMemo(
+    () => [{ id: '', title: '(None)' }, ...flat.map((c) => ({ id: c.id, title: c.title }))],
+    [flat]
+  )
 
   return (
-    <main className="min-h-screen bg-slate-50 p-6 text-slate-900">
-      <div className="mx-auto max-w-7xl">
-        <header className="mb-6">
-          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">Manage Category Tree</h1>
-          <p className="mt-1 text-slate-700">
-            Create, edit, and organize categories. Fields include <span className="font-semibold">title</span>,{' '}
-            <span className="font-semibold">slug</span>, <span className="font-semibold">parent</span>,{' '}
-            <span className="font-semibold">image URL</span>, and <span className="font-semibold">description</span>.
-          </p>
-        </header>
+    <main className="p-6">
+      <h1 className="text-2xl font-bold text-gray-900 mb-4">Manage Category Tree</h1>
 
-        <div className="grid gap-6 md:grid-cols-[minmax(0,420px),1fr]">
-          {/* Left: Form Card */}
-          <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 px-5 py-3">
-              <h2 className="text-lg font-semibold text-slate-900">
-                {editing ? 'Edit Category' : 'Add Category'}
-              </h2>
-            </div>
+      <form
+        onSubmit={editing ? handleUpdate : handleSubmit}
+        className="mb-8 grid gap-3 max-w-2xl"
+      >
+        {error && <div className="text-red-700 bg-red-50 border border-red-200 p-2 rounded">{error}</div>}
 
-            <form
-              onSubmit={editing ? onSubmitUpdate : onSubmitCreate}
-              className="px-5 py-4"
-              autoComplete="off"
-            >
-              <div className="grid gap-4">
-                <div>
-                  <label className="mb-1 block text-sm font-semibold text-slate-900">Title</label>
-                  <input
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100"
-                    placeholder="e.g. Braking Systems"
-                    value={title}
-                    onChange={e => setTitle(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-semibold text-slate-900">Slug</label>
-                  <input
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100"
-                    placeholder="braking-systems"
-                    value={slug}
-                    onChange={e => setSlug(e.target.value)}
-                    required
-                  />
-                  <p className="mt-1 text-xs text-slate-600">Auto-generated from title; you can override if needed.</p>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-semibold text-slate-900">
-                    Parent <span className="font-normal text-slate-600">(optional)</span>
-                  </label>
-                  <select
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:opacity-60"
-                    value={parentId ?? ''}
-                    onChange={e => setParentId(e.target.value || null)}
-                    disabled={!!editing}
-                  >
-                    <option value="">(Top level)</option>
-                    {flatCategories.map(c => (
-                      <option key={c.id} value={c.id}>
-                        {c.title}
-                      </option>
-                    ))}
-                  </select>
-                  {editing ? (
-                    <p className="mt-1 text-xs text-slate-600">Parent locked while editing (to keep the tree stable).</p>
-                  ) : null}
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-semibold text-slate-900">Image URL</label>
-                  <input
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100"
-                    placeholder="https://cdn.shopify.com/s/files/.../image.jpg"
-                    value={image}
-                    onChange={e => setImage(e.target.value)}
-                  />
-                  {image ? (
-                    <img
-                      src={image}
-                      alt="preview"
-                      className="mt-2 h-28 w-full max-w-xs rounded-lg border border-slate-200 object-cover"
-                      onError={(e) => (e.currentTarget.style.display = 'none')}
-                    />
-                  ) : null}
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-semibold text-slate-900">
-                    Description <span className="font-normal text-slate-600">(optional)</span>
-                  </label>
-                  <textarea
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100"
-                    rows={4}
-                    placeholder="Short description for this category"
-                    value={description}
-                    onChange={e => setDescription(e.target.value)}
-                  />
-                  <div className="mt-1 text-right text-xs text-slate-600">{description.length} chars</div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <button
-                    type="submit"
-                    className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-200"
-                  >
-                    {editing ? 'Update Category' : 'Add Category'}
-                  </button>
-                  {editing ? (
-                    <button
-                      type="button"
-                      onClick={resetForm}
-                      className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-800 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-slate-200"
-                    >
-                      Cancel
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            </form>
-          </section>
-
-          {/* Right: Tree & Filter */}
-          <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 px-5 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold text-slate-900">Category Tree</h2>
-                <div className="w-64">
-                  <label className="sr-only">Filter categories</label>
-                  <input
-                    value={filter}
-                    onChange={e => setFilter(e.target.value)}
-                    placeholder="Filter by title or slug…"
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="max-h-[70vh] overflow-auto px-5 py-4">
-              {filteredTree.length ? (
-                <Tree nodes={filteredTree} />
-              ) : (
-                <p className="text-slate-700">No categories match your filter.</p>
-              )}
-            </div>
-          </section>
+        <div className="grid gap-1">
+          <label className="text-sm font-medium text-gray-900">Title</label>
+          <input
+            className="border rounded p-2 text-gray-900"
+            placeholder="e.g., Aerodynamics"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+          />
         </div>
-      </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium text-gray-900">Slug</label>
+          <input
+            className="border rounded p-2 text-gray-900"
+            placeholder="e.g., aerodynamics"
+            value={slug}
+            onChange={(e) => setSlug(e.target.value)}
+          />
+          <p className="text-xs text-gray-600">Auto-generates from Title (replaces “&” with “-”, cleans spaces/symbols).</p>
+        </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium text-gray-900">Parent</label>
+          <select
+            className="border rounded p-2 text-gray-900"
+            value={parentId ?? ''}
+            onChange={(e) => setParentId(e.target.value || null)}
+            disabled={!!editing} // keep simple for now
+          >
+            {parentOptions.map((opt) => (
+              <option key={opt.id} value={opt.id}>
+                {opt.title}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium text-gray-900">Image URL (optional)</label>
+          <input
+            className="border rounded p-2 text-gray-900"
+            placeholder="https://…"
+            value={image}
+            onChange={(e) => setImage(e.target.value)}
+          />
+        </div>
+
+        <div className="grid gap-1">
+          <label className="text-sm font-medium text-gray-900">Description (optional)</label>
+          <textarea
+            className="border rounded p-2 text-gray-900"
+            placeholder="Short blurb for this category…"
+            value={description}
+            rows={3}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="submit"
+            className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+          >
+            {editing ? 'Update Category' : 'Add Category'}
+          </button>
+          {editing && (
+            <button
+              type="button"
+              onClick={resetForm}
+              className="px-3 py-2 rounded border text-gray-900 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+      </form>
+
+      <h2 className="text-xl font-semibold text-gray-900 mb-2">Category Tree</h2>
+      {loading ? (
+        <div className="text-gray-700">Loading…</div>
+      ) : (
+        renderTree(tree)
+      )}
     </main>
   )
 }

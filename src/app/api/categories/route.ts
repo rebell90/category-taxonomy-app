@@ -1,123 +1,122 @@
-// src/app/api/categories/route.ts
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
+// /src/app/api/categories/route.ts
+import { NextRequest, NextResponse } from 'next/server'
+import prisma from '@/lib/prisma'
 
 type CategoryRow = {
-  id: string;
-  title: string;
-  slug: string;
-  parentId: string | null;
-};
-
-type TreeNode = CategoryRow & {
-  // keep placeholders for future fields; always null for now
-  image: string | null;
-  description: string | null;
-  children: TreeNode[];
-};
-
-function buildTree(rows: CategoryRow[], parentId: string | null): TreeNode[] {
-  return rows
-    .filter((r) => r.parentId === parentId)
-    .map((r) => ({
-      ...r,
-      image: null,
-      description: null,
-      children: buildTree(rows, r.id),
-    }));
+  id: string
+  title: string
+  slug: string
+  parentId: string | null
+  image: string | null
+  description: string | null
 }
 
-// GET: return nested category tree (no image/description selects)
+type CategoryNode = CategoryRow & {
+  children: CategoryNode[]
+}
+
+// GET: return full tree for the admin UI
 export async function GET() {
-  try {
-    const rows = await prisma.category.findMany({
-      orderBy: [{ parentId: 'asc' }, { title: 'asc' }],
-      select: { id: true, title: true, slug: true, parentId: true },
-    });
+  // Always read fresh, include image/description
+  const rows: CategoryRow[] = await prisma.category.findMany({
+    orderBy: [{ parentId: 'asc' }, { title: 'asc' }],
+    select: {
+      id: true,
+      title: true,
+      slug: true,
+      parentId: true,
+      image: true,
+      description: true,
+    },
+  })
 
-    const tree = buildTree(rows as CategoryRow[], null);
-    return NextResponse.json(tree);
-  } catch (e) {
-    console.error('GET /api/categories error', e);
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
-  }
+  const buildTree = (all: CategoryRow[], parentId: string | null): CategoryNode[] =>
+    all
+      .filter((c) => c.parentId === parentId)
+      .map((c) => ({
+        ...c,
+        children: buildTree(all, c.id),
+      }))
+
+  const tree = buildTree(rows, null)
+  return NextResponse.json(tree)
 }
 
-// POST: create a category (ignore image/description if DB doesn’t have them)
+// POST: create a category
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const title: string | undefined = body?.title?.trim();
-    const slug: string | undefined = body?.slug?.trim();
-    const parentId: string | null = body?.parentId || null;
+    const body = await req.json() as Partial<CategoryRow>
+    const { title, slug } = body
 
     if (!title || !slug) {
-      return NextResponse.json(
-        { error: 'Title and slug are required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Title and slug are required' }, { status: 400 })
     }
 
-    // Only pass columns we know exist in DB
     const created = await prisma.category.create({
-      data: { title, slug, parentId },
-      select: { id: true, title: true, slug: true, parentId: true },
-    });
+      data: {
+        title,
+        slug,
+        parentId: body.parentId ?? null,
+        image: body.image ?? null,
+        description: body.description ?? null,
+      },
+      select: {
+        id: true, title: true, slug: true, parentId: true, image: true, description: true,
+      },
+    })
 
-    const node: TreeNode = { ...created, image: null, description: null, children: [] };
-    return NextResponse.json(node);
-  } catch (e: any) {
-    console.error('POST /api/categories error', e);
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+    return NextResponse.json(created)
+  } catch (err) {
+    console.error('POST /api/categories error', err)
+    return NextResponse.json({ error: 'Failed to create category' }, { status: 500 })
   }
 }
 
-// PUT: update a category (ignore image/description if DB doesn’t have them)
+// PUT: update a category
 export async function PUT(req: NextRequest) {
   try {
-    const body = await req.json();
-    const id: string | undefined = body?.id;
-    const title: string | undefined = body?.title?.trim();
-    const slug: string | undefined = body?.slug?.trim();
-    const parentId: string | null | undefined = body?.parentId ?? undefined;
-
+    const body = await req.json() as Partial<CategoryRow> & { id?: string }
+    const { id } = body
     if (!id) {
-      return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+      return NextResponse.json({ error: 'Missing id' }, { status: 400 })
     }
 
-    const data: Record<string, unknown> = {};
-    if (typeof title === 'string' && title.length) data.title = title;
-    if (typeof slug === 'string' && slug.length) data.slug = slug;
-    if (parentId !== undefined) data.parentId = parentId;
+    const data: Record<string, unknown> = {}
+    if (typeof body.title === 'string') data.title = body.title
+    if (typeof body.slug === 'string') data.slug = body.slug
+    if (body.parentId !== undefined) data.parentId = body.parentId
+    if (body.image !== undefined) data.image = body.image ?? null
+    if (body.description !== undefined) data.description = body.description ?? null
 
     const updated = await prisma.category.update({
       where: { id },
       data,
-      select: { id: true, title: true, slug: true, parentId: true },
-    });
+      select: {
+        id: true, title: true, slug: true, parentId: true, image: true, description: true,
+      },
+    })
 
-    const node: TreeNode = { ...updated, image: null, description: null, children: [] };
-    return NextResponse.json(node);
-  } catch (e: any) {
-    console.error('PUT /api/categories error', e);
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+    return NextResponse.json(updated)
+  } catch (err) {
+    console.error('PUT /api/categories error', err)
+    return NextResponse.json({ error: 'Failed to update category' }, { status: 500 })
   }
 }
 
-// DELETE: remove a category
+// DELETE: delete a category (and cascade via your business rules if desired)
 export async function DELETE(req: NextRequest) {
   try {
-    const body = await req.json();
-    const id: string | undefined = body?.id;
-    if (!id) {
-      return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+    const body = await req.json() as { id?: string }
+    if (!body.id) {
+      return NextResponse.json({ error: 'Missing id' }, { status: 400 })
     }
 
-    await prisma.category.delete({ where: { id } });
-    return NextResponse.json({ success: true });
-  } catch (e: any) {
-    console.error('DELETE /api/categories error', e);
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+    // Optionally: guard against deleting a category that still has children/products
+    await prisma.category.delete({ where: { id: body.id } })
+
+    return NextResponse.json({ success: true })
+  } catch (err) {
+    console.error('DELETE /api/categories error', err)
+    return NextResponse.json({ error: 'Failed to delete category' }, { status: 500 })
   }
 }
