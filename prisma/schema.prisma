@@ -8,24 +8,22 @@ datasource db {
 }
 
 model Category {
-  id        String     @id @default(cuid())
+  id        String            @id @default(cuid())
   title     String
-  slug      String     @unique
-  parentId  String?    @db.Text
-  parent    Category?  @relation("ParentChild", fields: [parentId], references: [id])
-  children  Category[] @relation("ParentChild")
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  products  ProductCategory[] 
-  image       String?   // image URL
-  description String?   // optional blurb
+  slug      String            @unique
+  parentId  String?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  parent    Category?         @relation("ParentChild", fields: [parentId], references: [id])
+  children  Category[]        @relation("ParentChild")
+  products  ProductCategory[]
 }
 
 model ProductCategory {
-  id          String   @id @default(cuid())
-  productGid  String   // e.g., "gid://shopify/Product/1234567890"
-  categoryId  String
-  category    Category @relation(fields: [categoryId], references: [id])
+  id         String   @id @default(cuid())
+  productGid String
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
 
-  @@unique([productGid, categoryId])   // prevent dup links
+  @@unique([productGid, categoryId])
 }
