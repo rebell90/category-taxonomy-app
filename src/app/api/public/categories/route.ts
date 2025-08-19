@@ -3,7 +3,6 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 
-// CORS for theme fetches
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -23,35 +22,28 @@ type Row = {
 };
 
 type PublicNode = Row & {
-  image: string | null;        // keep keys in payload (null for now)
-  description: string | null;  // keep keys in payload (null for now)
+  image: string | null;        // keep keys for frontend; always null for now
+  description: string | null;  // keep keys for frontend; always null for now
   children: PublicNode[];
 };
 
 function buildTree(rows: PublicNode[], parentId: string | null): PublicNode[] {
   return rows
-    .filter((r) => r.parentId === parentId)
-    .map((r) => ({
-      ...r,
-      children: buildTree(rows, r.id),
-    }));
+    .filter(r => r.parentId === parentId)
+    .map(r => ({ ...r, children: buildTree(rows, r.id) }));
 }
 
 export async function GET() {
   try {
-    // ❗ DO NOT select image/description (DB may not have these columns yet)
-    const rows = await prisma.category.findMany({
-      orderBy: [{ parentId: 'asc' }, { title: 'asc' }],
-      select: {
-        id: true,
-        title: true,
-        slug: true,
-        parentId: true,
-      },
-    });
+    // IMPORTANT: raw SQL selecting ONLY existing columns.
+    // Double quotes preserve exact column names as created by Prisma.
+    const rows = await prisma.$queryRaw<Row[]>`
+      SELECT "id", "title", "slug", "parentId"
+      FROM "Category"
+      ORDER BY COALESCE("parentId", ''), "title"
+    `;
 
-    // normalize to always include image/description in the response
-    const flat: PublicNode[] = (rows as Row[]).map((r) => ({
+    const flat: PublicNode[] = rows.map(r => ({
       ...r,
       image: null,
       description: null,
