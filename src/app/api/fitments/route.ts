@@ -1,23 +1,77 @@
-// src/app/api/fitments/route.ts
-import { prisma } from "@/lib/prisma";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from 'next/server'
+import prisma from '@/lib/prisma'
 
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const make = searchParams.get("make");
-  const model = searchParams.get("model");
-  const year = searchParams.get("year") ? Number(searchParams.get("year")) : undefined;
+// Define the shape of the request payload
+interface FitmentPayload {
+  productGid: string
+  yearFrom?: number | null
+  yearTo?: number | null
+  make: string
+  model: string
+  trim?: string | null
+  chassis?: string | null
+}
 
-  const where: any = {};
-  if (make) where.make = make;
-  if (model) where.model = model;
-  if (year) {
-    where.AND = [
-      { yearFrom: { lte: year } },
-      { OR: [{ yearTo: null }, { yearTo: { gte: year } }] },
-    ];
+export async function GET() {
+  try {
+    const fitments = await prisma.productFitment.findMany({
+      orderBy: [{ make: 'asc' }, { model: 'asc' }, { yearFrom: 'asc' }],
+    })
+    return NextResponse.json(fitments)
+  } catch (err: unknown) {  // 👈 strict
+    if (err instanceof Error) {
+      console.error('Error fetching fitments:', err.message)
+    }
+    return NextResponse.json({ error: 'Failed to fetch fitments' }, { status: 500 })
   }
+}
 
-  const fitments = await prisma.productFitment.findMany({ where });
-  return NextResponse.json(fitments);
+export async function POST(req: NextRequest) {
+  try {
+    const body: FitmentPayload = await req.json() // 👈 typed instead of any
+
+    if (!body.productGid || !body.make || !body.model) {
+      return NextResponse.json(
+        { error: 'productGid, make, and model are required' },
+        { status: 400 }
+      )
+    }
+
+    const created = await prisma.productFitment.create({
+      data: {
+        productGid: body.productGid,
+        yearFrom: body.yearFrom ?? null,
+        yearTo: body.yearTo ?? null,
+        make: body.make,
+        model: body.model,
+        trim: body.trim ?? null,
+        chassis: body.chassis ?? null,
+      },
+    })
+
+    return NextResponse.json(created, { status: 201 })
+  } catch (err: unknown) {  // 👈 strict
+    if (err instanceof Error) {
+      console.error('Error creating fitment:', err.message)
+    }
+    return NextResponse.json({ error: 'Failed to create fitment' }, { status: 500 })
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url)
+    const id = searchParams.get('id')
+    if (!id) {
+      return NextResponse.json({ error: 'Missing id' }, { status: 400 })
+    }
+
+    await prisma.productFitment.delete({ where: { id } })
+    return NextResponse.json({ success: true })
+  } catch (err: unknown) {  // 👈 strict
+    if (err instanceof Error) {
+      console.error('Error deleting fitment:', err.message)
+    }
+    return NextResponse.json({ error: 'Failed to delete fitment' }, { status: 500 })
+  }
 }
