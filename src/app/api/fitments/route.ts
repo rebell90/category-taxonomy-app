@@ -1,62 +1,72 @@
-// src/app/api/fitments/route.ts
-import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
-import type { Prisma } from '@prisma/client'
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import type { ProductFitment } from "@prisma/client";
 
-const corsHeaders: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Max-Age': '600',
-}
-
-export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: corsHeaders })
-}
-
-/**
- * GET /api/fitments
- * Optional query params:
- *  - productGid (string)
- *  - make (string, contains/insensitive)
- *  - model (string, contains/insensitive)
- *  - year (number, inclusive range test with yearFrom/yearTo)
- *
- * Example:
- *  /api/fitments?make=Honda&model=Civic&year=2019
- */
-export async function GET(req: NextRequest) {
+// GET /api/fitments?year=2020&make=Toyota&model=Camry
+export async function GET(req: Request) {
   try {
-    const { searchParams } = new URL(req.url)
-    const productGid = searchParams.get('productGid') || undefined
-    const make = searchParams.get('make') || undefined
-    const model = searchParams.get('model') || undefined
-    const yearParam = searchParams.get('year')
-    const year = yearParam ? Number(yearParam) : undefined
+    const { searchParams } = new URL(req.url);
 
-    const where: Prisma.ProductFitmentWhereInput = {}
+    const year = searchParams.get("year")
+      ? Number(searchParams.get("year"))
+      : undefined;
+    const make = searchParams.get("make") || undefined;
+    const model = searchParams.get("model") || undefined;
 
-    if (productGid) where.productGid = productGid
-    if (make) where.make = { contains: make, mode: 'insensitive' }
-    if (model) where.model = { contains: model, mode: 'insensitive' }
+    // Build Prisma filter with proper typing
+    const where: Parameters<typeof prisma.productFitment.findMany>[0]["where"] = {};
 
-    if (typeof year === 'number' && !Number.isNaN(year)) {
-      // Include if (yearFrom is null or <= year) AND (yearTo is null or >= year)
+    if (make) {
+      where.make = { equals: make };
+    }
+    if (model) {
+      where.model = { equals: model };
+    }
+    if (year) {
       where.AND = [
-        { OR: [{ yearFrom: null }, { yearFrom: { lte: year } }] },
-        { OR: [{ yearTo: null }, { yearTo: { gte: year } }] },
-      ]
+        { yearFrom: { lte: year } },
+        { yearTo: { gte: year } },
+      ];
     }
 
-    const fitments = await prisma.productFitment.findMany({
+    const fitments: ProductFitment[] = await prisma.productFitment.findMany({
       where,
-      orderBy: [{ make: 'asc' }, { model: 'asc' }, { yearFrom: 'asc' }],
-    })
+      orderBy: [{ make: "asc" }, { model: "asc" }],
+    });
 
-    return NextResponse.json(fitments, { headers: corsHeaders })
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    console.error('Public fitments GET error:', message)
-    return NextResponse.json({ error: 'Failed to fetch fitments' }, { status: 500, headers: corsHeaders })
+    return NextResponse.json(fitments);
+  } catch (err) {
+    console.error("Error in GET /api/fitments:", err);
+    return NextResponse.json(
+      { error: "Failed to fetch fitments" },
+      { status: 500 }
+    );
+  }
+}
+
+// POST /api/fitments
+export async function POST(req: Request) {
+  try {
+    const body: ProductFitment = await req.json();
+
+    const newFitment = await prisma.productFitment.create({
+      data: {
+        productGid: body.productGid,
+        make: body.make,
+        model: body.model,
+        yearFrom: body.yearFrom,
+        yearTo: body.yearTo,
+        trim: body.trim,
+        chassis: body.chassis,
+      },
+    });
+
+    return NextResponse.json(newFitment, { status: 201 });
+  } catch (err) {
+    console.error("Error in POST /api/fitments:", err);
+    return NextResponse.json(
+      { error: "Failed to create fitment" },
+      { status: 500 }
+    );
   }
 }
