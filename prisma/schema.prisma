@@ -33,3 +33,23 @@ model ProductCategory {
 
   @@unique([productGid, categoryId])
 }
+
+model ProductFitment {
+  id         String @id @default(cuid())
+  productGid String
+  // Basic YMM; add trim/chassis/body if you want
+  yearFrom   Int?
+  yearTo     Int?
+  make       String
+  model      String
+  trim       String?   // optional
+  chassis    String?   // optional
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([productGid])
+  @@index([make, model])
+  @@index([yearFrom, yearTo])
+  @@unique([productGid, make, model, yearFrom, yearTo, trim, chassis])
+}

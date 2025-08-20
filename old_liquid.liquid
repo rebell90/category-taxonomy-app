@@ -1,0 +1,366 @@
+{% comment %}
+  category-landing.liquid (rewritten)
+  - Breadcrumbs (Home › Parent › Current)
+  - Subcategory tiles (title + optional image)
+  - Product grid filtered by exact slug
+
+  Settings expected (from page.category.json):
+    - categories_json_url (text)
+    - storefront_token (text)  // kept for future; not used by this script now
+    - products_per_page (range)
+    - show_cat_images (checkbox)
+{% endcomment %}
+
+<section
+  id="category-landing"
+  class="page-width category-landing"
+  data-slug="{{ page.handle | escape }}"
+  data-json-url="{{ section.settings.categories_json_url | escape }}"
+  data-storefront-token="{{ section.settings.storefront_token | escape }}"
+  data-products-per-page="{{ section.settings.products_per_page | default: 12 }}"
+  data-show-cat-images="{{ section.settings.show_cat_images }}"
+>
+  <nav class="category-landing__breadcrumbs" aria-label="Breadcrumb"></nav>
+
+  <header class="category-landing__header">
+    <h2 id="cat-title" class="h2"></h2>
+    <p id="cat-desc" class="category-landing__description" hidden></p>
+  </header>
+
+  <div id="child-cats" class="category-landing__children" hidden>
+    <h3 class="h3 category-landing__children-title">Subcategories</h3>
+    <div class="category-landing__grid"></div>
+  </div>
+
+  <div id="products" class="category-landing__products" hidden>
+    <h3 class="h3">Products</h3>
+    <div id="product-grid" class="category-landing__product-grid"></div>
+  </div>
+
+  <div class="category-landing__loading">Loading…</div>
+</section>
+
+<style>
+  .category-landing { font: inherit; }
+  .category-landing__loading { opacity:.8; margin-top:1rem; }
+
+  /* Header + description */
+  .category-landing__header { margin: 0 0 1rem; }
+  #cat-title { color: #222; letter-spacing:.2px; }
+  .category-landing__description { color:#333; margin-top:.35rem; }
+
+  /* Breadcrumbs */
+  .category-landing__breadcrumbs {
+    font-size: 1.05rem;
+    margin: .25rem 0 1rem;
+    color: #444;
+  }
+  .category-landing__breadcrumbs a {
+    color: #444; text-decoration: none;
+  }
+  .category-landing__breadcrumbs a:hover { text-decoration: underline; }
+  .category-landing__breadcrumbs .sep { margin: 0 .4rem; }
+
+  /* Subcategory tiles */
+  .category-landing__children { margin-top:.75rem; }
+  .category-landing__children-title { margin: 0 0 .75rem; color:#222; }
+  .category-landing__grid {
+    display:grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 1rem;
+  }
+  .category-landing__tile {
+    display:block;
+    text-decoration:none; color:#111;
+    border:1px solid rgba(0,0,0,.12);
+    border-radius:12px; overflow:hidden;
+    background:#fff;
+    transition: box-shadow .15s ease, transform .15s ease, border-color .15s ease;
+  }
+  .category-landing__tile:hover {
+    box-shadow: 0 6px 20px rgba(0,0,0,.08);
+    transform: translateY(-1px);
+    border-color: rgba(0,0,0,.18);
+  }
+  .category-landing__thumb {
+    aspect-ratio: 16/9; width:100%; object-fit: cover; display:block; background:#f3f4f6;
+  }
+  .category-landing__tile-body { padding:.65rem .8rem; }
+  .category-landing__tile-title { font-weight:700; font-size:1rem; margin:0; color:#111; }
+
+  /* Products grid */
+  .category-landing__products { margin-top:2rem; }
+  .category-landing__product-grid {
+    display:grid; gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
+  .category-landing__card {
+    border:1px solid rgba(0,0,0,.12);
+    border-radius:12px; background:#fff;
+    overflow:hidden; text-decoration:none; color:#111;
+    transition: box-shadow .15s ease, transform .15s ease, border-color .15s ease;
+  }
+  .category-landing__card:hover {
+    box-shadow: 0 6px 20px rgba(0,0,0,.08);
+    transform: translateY(-1px);
+    border-color: rgba(0,0,0,.18);
+  }
+  .category-landing__img {
+    width:100%; aspect-ratio: 1/1; object-fit:cover; display:block; background:#f3f4f6;
+  }
+  .category-landing__card-body { padding:.65rem .8rem; }
+  .category-landing__card-title { font-weight:700; font-size:1rem; margin:0 0 .3rem; color:#111; }
+  .category-landing__price { font-size:.95rem; color:#333; }
+</style>
+
+<script>
+(function(){
+  const el = document.getElementById('category-landing');
+  if (!el) return;
+
+  const slug        = el.getAttribute('data-slug') || '';
+  const jsonURL     = el.getAttribute('data-json-url') || '';
+  const perPage     = Number(el.getAttribute('data-products-per-page') || 12);
+  const showImages  = el.getAttribute('data-show-cat-images') === 'true';
+
+  const loading     = el.querySelector('.category-landing__loading');
+  const titleEl     = document.getElementById('cat-title');
+  const descEl      = document.getElementById('cat-desc');
+  const crumbsEl    = el.querySelector('.category-landing__breadcrumbs');
+
+  const childWrap   = document.getElementById('child-cats');
+  const childGrid   = childWrap.querySelector('.category-landing__grid');
+  const productsWrap= document.getElementById('products');
+  const productGrid = document.getElementById('product-grid');
+
+  const placeholderImg = '//cdn.shopify.com/s/images/admin/no-image-256x256.gif';
+
+  function fetchJSON(url) {
+    return fetch(url, { credentials: 'omit' }).then(r => {
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      return r.json();
+    });
+  }
+
+  function findBySlug(nodes, theSlug, chain = []) {
+    if (!Array.isArray(nodes)) return null;
+    for (const n of nodes) {
+      const here = {
+        title: n.title || n.name || n.slug,
+        slug: n.slug,
+        image: n.image,
+        description: n.description
+      };
+      if (n.slug === theSlug) return { node: n, chain: [...chain, here] };
+      const deeper = findBySlug(n.children, theSlug, [...chain, here]);
+      if (deeper) return deeper;
+    }
+    return null;
+  }
+
+  function renderCrumbs(chain) {
+    if (!chain || !chain.length) return;
+    const frag = document.createDocumentFragment();
+
+    const aHome = document.createElement('a');
+    aHome.href = '/';
+    aHome.textContent = 'Home';
+    frag.appendChild(aHome);
+
+    chain.forEach((c, i) => {
+      const sep = document.createElement('span');
+      sep.className = 'sep';
+      sep.textContent = '›';
+      frag.appendChild(sep);
+
+      if (i < chain.length - 1) {
+        const a = document.createElement('a');
+        a.href = '/pages/' + encodeURIComponent(c.slug);
+        a.textContent = c.title;
+        frag.appendChild(a);
+      } else {
+        const strong = document.createElement('strong');
+        strong.textContent = c.title;
+        frag.appendChild(strong);
+      }
+    });
+
+    crumbsEl.innerHTML = '';
+    crumbsEl.appendChild(frag);
+  }
+
+  function renderChildren(children) {
+    if (!children || !children.length) { childWrap.hidden = true; return; }
+    const frag = document.createDocumentFragment();
+
+    children.forEach(ch => {
+      const a = document.createElement('a');
+      a.className = 'category-landing__tile';
+      a.href = '/pages/' + encodeURIComponent(ch.slug);
+
+      if (showImages && ch.image) {
+        const img = document.createElement('img');
+        img.className = 'category-landing__thumb';
+        img.src = ch.image;
+        img.alt = ch.title || ch.slug;
+        a.appendChild(img);
+      }
+
+      const body = document.createElement('div');
+      body.className = 'category-landing__tile-body';
+
+      const h = document.createElement('p');
+      h.className = 'category-landing__tile-title';
+      h.textContent = ch.title || ch.slug;
+      body.appendChild(h);
+
+      a.appendChild(body);
+      frag.appendChild(a);
+    });
+
+    childGrid.innerHTML = '';
+    childGrid.appendChild(frag);
+    childWrap.hidden = false;
+  }
+
+  function deriveProductsEndpoint(categoriesUrl) {
+    // Reuse the same origin, swap path to /api/public/products-by-slug
+    try {
+      const u = new URL(categoriesUrl);
+      u.pathname = '/api/public/products-by-slug';
+      u.search = '';
+      return u.toString();
+    } catch {
+      // Fallback string swap if categoriesUrl wasn't an absolute URL
+      return (categoriesUrl || '').replace(/\/api\/public\/categories.*/, '/api/public/products-by-slug');
+    }
+  }
+
+  function formatPriceText(priceStr) {
+    if (!priceStr) return '';
+    // Support "123.45 USD" or already-formatted strings
+    const m = /^([\d.]+)\s+([A-Z]{3})$/.exec(priceStr);
+    if (m) {
+      try {
+        return new Intl.NumberFormat(undefined, { style:'currency', currency:m[2] }).format(parseFloat(m[1]));
+      } catch { /* fall through */ }
+    }
+    return priceStr;
+  }
+
+  async function fetchProductsExact(slug, limit) {
+    if (!slug) return [];
+    const endpointBase = deriveProductsEndpoint(jsonURL);
+    const endpoint = `${endpointBase}?slug=${encodeURIComponent(slug)}&limit=${encodeURIComponent(limit)}`;
+    const res = await fetch(endpoint, { credentials: 'omit' });
+    if (!res.ok) throw new Error('Products HTTP ' + res.status);
+    const json = await res.json();
+    // Expected shape from Next API: { products: [{ id, handle, title, image:{src}, price:"amount CODE" }] }
+    return Array.isArray(json.products) ? json.products : [];
+  }
+
+  function renderProducts(products) {
+    if (!products || !products.length) { productsWrap.hidden = true; return; }
+    const frag = document.createDocumentFragment();
+
+    products.forEach(p => {
+      const a = document.createElement('a');
+      a.className = 'category-landing__card';
+      a.href = '/products/' + (p.handle || '');
+
+      const img = document.createElement('img');
+      img.className = 'category-landing__img';
+      img.src = (p.image && p.image.src) || placeholderImg;
+      img.alt = p.title || '';
+      a.appendChild(img);
+
+      const body = document.createElement('div');
+      body.className = 'category-landing__card-body';
+
+      const t = document.createElement('p');
+      t.className = 'category-landing__card-title';
+      t.textContent = p.title || '';
+      body.appendChild(t);
+
+      if (p.price) {
+        const price = document.createElement('div');
+        price.className = 'category-landing__price';
+        price.textContent = formatPriceText(p.price);
+        body.appendChild(price);
+      }
+
+      a.appendChild(body);
+      frag.appendChild(a);
+    });
+
+    productGrid.innerHTML = '';
+    productGrid.appendChild(frag);
+    productsWrap.hidden = false;
+  }
+
+  (async () => {
+    try {
+      const tree = await fetchJSON(jsonURL);
+      const nodes = Array.isArray(tree) ? tree : (tree.tree || tree.categories || []);
+      const hit = findBySlug(nodes, slug);
+      if (!hit) throw new Error('Category not found for slug: ' + slug);
+
+      // Title + description
+      titleEl.textContent = hit.node.title || hit.node.name || hit.node.slug;
+      if (hit.node.description) {
+        descEl.textContent = hit.node.description;
+        descEl.hidden = false;
+      }
+
+      // Breadcrumbs + children
+      renderCrumbs(hit.chain);
+      renderChildren(hit.node.children || []);
+
+      // Products for this exact slug
+      const products = await fetchProductsExact(slug, perPage);
+      renderProducts(products);
+    } catch (e) {
+      console.error('[category-landing]', e);
+      titleEl.textContent = 'Category';
+    } finally {
+      const loader = el.querySelector('.category-landing__loading');
+      if (loader) loader.remove();
+    }
+  })();
+})();
+</script>
+
+{% schema %}
+{
+  "name": "Category landing",
+  "settings": [
+    {
+      "type": "text",
+      "id": "categories_json_url",
+      "label": "Categories JSON URL",
+      "default": "https://category-taxonomy-app.onrender.com/api/public/categories"
+    },
+    {
+      "type": "text",
+      "id": "storefront_token",
+      "label": "Storefront API token"
+    },
+    {
+      "type": "range",
+      "id": "products_per_page",
+      "min": 4,
+      "max": 24,
+      "step": 4,
+      "unit": "ea",
+      "label": "Products to load",
+      "default": 12
+    },
+    {
+      "type": "checkbox",
+      "id": "show_cat_images",
+      "label": "Show subcategory images (requires image URLs in JSON)",
+      "default": true
+    }
+  ]
+}
+{% endschema %}
