@@ -2,7 +2,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 
-// Payload the client sends when creating a fitment
 interface FitmentPayload {
   productGid: string
   yearFrom?: number | null
@@ -19,7 +18,7 @@ export async function GET() {
       orderBy: [{ make: 'asc' }, { model: 'asc' }, { yearFrom: 'asc' }],
     })
     return NextResponse.json(fitments)
-  } catch (err) {
+  } catch (err: unknown) {   // 👈 mark as unknown, not any
     console.error('Error fetching fitments:', err)
     return NextResponse.json({ error: 'Failed to fetch fitments' }, { status: 500 })
   }
@@ -27,7 +26,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const body: FitmentPayload = await req.json()
+    const body = (await req.json()) as FitmentPayload   // 👈 cast instead of any
 
     if (!body.productGid || !body.make || !body.model) {
       return NextResponse.json(
@@ -49,16 +48,12 @@ export async function POST(req: NextRequest) {
     })
 
     return NextResponse.json(created, { status: 201 })
-  } catch (err) {
+  } catch (err: unknown) {   // 👈 strict typing
     console.error('Error creating fitment:', err)
     return NextResponse.json({ error: 'Failed to create fitment' }, { status: 500 })
   }
 }
 
-/**
- * Optional: delete by id (handy for your UI)
- * DELETE /api/fitments?id=<fitmentId>
- */
 export async function DELETE(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
@@ -69,7 +64,7 @@ export async function DELETE(req: NextRequest) {
 
     await prisma.productFitment.delete({ where: { id } })
     return NextResponse.json({ success: true })
-  } catch (err) {
+  } catch (err: unknown) {   // 👈 strict typing
     console.error('Error deleting fitment:', err)
     return NextResponse.json({ error: 'Failed to delete fitment' }, { status: 500 })
   }
