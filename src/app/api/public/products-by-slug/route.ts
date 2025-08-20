@@ -42,10 +42,10 @@ export async function OPTIONS() {
 /**
  * Check if a table exists (case-sensitive name, quoted as created by Prisma).
  */
-async function tableExists(tableName: string): Promise<boolean> {
-  // to_regclass returns null if missing; we quote to respect PascalCase
+async function tableExists(schema: string, table: string): Promise<boolean> {
+  // format('%I.%I', schema, table) does proper identifier quoting
   const rows = await prisma.$queryRaw<Array<{ exists: boolean }>>`
-    SELECT (to_regclass('public."${prisma.$executeRawUnsafe ? tableName : tableName}"') IS NOT NULL) AS exists
+    SELECT to_regclass(format('%I.%I', ${schema}, ${table})) IS NOT NULL AS exists
   `;
   return Boolean(rows?.[0]?.exists);
 }
