@@ -1,504 +1,410 @@
-'use client';
+'use client'
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react'
+import Image from 'next/image'
 
-// ---------- Types ----------
-type ProductSummary = {
-  id: string;              // Shopify GID
-  title: string;
-  handle: string;
-  imageUrl?: string | null;
-};
+/* =========================
+   Types
+========================= */
 
-type FitmentRow = {
-  id: string;
-  productGid: string;
-  yearFrom: number | null;
-  yearTo: number | null;
-  make: string | null;
-  model: string | null;
-  trim?: string | null;
-  chassis?: string | null;
-  createdAt?: string;
-  updatedAt?: string;
-};
+type Product = {
+  id: string           // productGid (gid://shopify/Product/…)
+  title: string
+  handle: string
+  imageUrl?: string | null
+}
 
-// ---------- Small utils (null-safe) ----------
+type ProductSearchResponse = {
+  products: Product[]
+}
+
+type Fitment = {
+  id: string
+  productGid: string
+  yearFrom: number | null
+  yearTo: number | null
+  make: string
+  model: string
+  trim: string | null
+  chassis: string | null
+  createdAt?: string
+  updatedAt?: string
+}
+
+type ListFitmentsResponse = {
+  fitments: Fitment[]
+}
+
+type UpsertFitmentRequest = {
+  productGid: string
+  yearFrom?: number | null
+  yearTo?: number | null
+  make: string
+  model: string
+  trim?: string | null
+  chassis?: string | null
+}
+
+type UpsertFitmentResponse = Fitment
+
+type DeleteFitmentRequest = {
+  id: string
+}
+
+/* =========================
+   Helpers
+========================= */
+
+const toIntOrNull = (s: string): number | null => {
+  const n = Number(s.trim())
+  return Number.isFinite(n) ? n : null
+}
+
 function emptyToNull(s?: string | null): string | null {
-  if (typeof s !== 'string') return null;
-  const trimmed = s.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-function intOrNull(s?: string | null): number | null {
-  if (typeof s !== 'string') return null;
-  const trimmed = s.trim();
-  if (!trimmed) return null;
-  const n = Number(trimmed);
-  return Number.isInteger(n) ? n : null;
-}
-function clampYear(n: number | null, min = 1900, max = 2100): number | null {
-  if (n == null) return null;
-  if (!Number.isFinite(n)) return null;
-  return Math.min(max, Math.max(min, n));
-}
-function yn(b?: boolean) {
-  return b ? 'Yes' : 'No';
+  if (s === undefined || s === null) return null
+  const trimmed = s.trim()
+  return trimmed.length ? trimmed : null
 }
 
-// ---------- Server calls (adjust if your endpoints differ) ----------
-async function fetchProducts(search: string): Promise<ProductSummary[]> {
-  const url = `/api/admin/products?search=${encodeURIComponent(search)}`;
-  const res = await fetch(url, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`Fetch products ${res.status}`);
-  const json = await res.json();
-  // Normalize expected fields
-  const list = Array.isArray(json.products) ? json.products : json;
-  return (list as any[]).map((p) => ({
-    id: String(p.id),
-    title: String(p.title ?? ''),
-    handle: String(p.handle ?? ''),
-    imageUrl: p.imageUrl ?? p.image?.src ?? null,
-  })) as ProductSummary[];
+/* =========================
+   API calls (typed)
+========================= */
+
+async function searchProducts(q: string): Promise<Product[]> {
+  const url = `/api/admin/products?q=${encodeURIComponent(q)}`
+  const res = await fetch(url, { method: 'GET' })
+  if (!res.ok) throw new Error(`Search HTTP ${res.status}`)
+  const json: ProductSearchResponse = await res.json()
+  return json.products
 }
 
-async function fetchFitments(productGid: string): Promise<FitmentRow[]> {
-  const url = `/api/admin/fitments?productGid=${encodeURIComponent(productGid)}`;
-  const res = await fetch(url, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`Fetch fitments ${res.status}`);
-  const json = await res.json();
-  return Array.isArray(json) ? json as FitmentRow[] : (json.fitments ?? []);
+async function listFitments(productGid: string): Promise<Fitment[]> {
+  const url = `/api/admin/fitments?productGid=${encodeURIComponent(productGid)}`
+  const res = await fetch(url, { method: 'GET' })
+  if (!res.ok) throw new Error(`List fitments HTTP ${res.status}`)
+  const json: ListFitmentsResponse = await res.json()
+  return json.fitments
 }
 
-async function createFitment(row: Omit<FitmentRow, 'id' | 'createdAt' | 'updatedAt'>): Promise<FitmentRow> {
+async function upsertFitment(payload: UpsertFitmentRequest): Promise<Fitment> {
   const res = await fetch('/api/admin/fitments', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(row),
-  });
+    body: JSON.stringify(payload),
+  })
   if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`Create ${res.status}: ${txt}`);
+    const text = await res.text()
+    throw new Error(`Upsert failed: ${text}`)
   }
-  return await res.json();
+  const json: UpsertFitmentResponse = await res.json()
+  return json
 }
 
-async function updateFitment(row: FitmentRow): Promise<FitmentRow> {
-  const res = await fetch('/api/admin/fitments', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(row),
-  });
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`Update ${res.status}: ${txt}`);
-  }
-  return await res.json();
-}
-
-async function deleteFitment(id: string, productGid: string): Promise<void> {
+async function deleteFitment(id: string): Promise<void> {
   const res = await fetch('/api/admin/fitments', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, productGid }),
-  });
+    body: JSON.stringify({ id } as DeleteFitmentRequest),
+  })
   if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`Delete ${res.status}: ${txt}`);
+    const text = await res.text()
+    throw new Error(`Delete failed: ${text}`)
   }
 }
 
-// ---------- Main Component ----------
-export default function FitmentsPage() {
-  // UI state
-  const [search, setSearch] = useState('');
-  const [loadingProducts, setLoadingProducts] = useState(false);
-  const [products, setProducts] = useState<ProductSummary[]>([]);
-  const [selected, setSelected] = useState<ProductSummary | null>(null);
+/* =========================
+   Component
+========================= */
 
-  const [loadingFitments, setLoadingFitments] = useState(false);
-  const [fitments, setFitments] = useState<FitmentRow[]>([]);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+export default function FitmentsDashboard() {
+  // Search
+  const [query, setQuery] = useState<string>('')
+  const [searching, setSearching] = useState<boolean>(false)
+  const [results, setResults] = useState<Product[]>([])
 
-  // Form state (for add or edit)
-  const [editing, setEditing] = useState<FitmentRow | null>(null);
-  const isEditing = useMemo(() => Boolean(editing && editing.id), [editing]);
+  // Selection
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
 
-  // Fetch products on search
-  useEffect(() => {
-    let abort = false;
-    (async () => {
-      try {
-        setLoadingProducts(true);
-        const list = await fetchProducts(search);
-        if (!abort) {
-          setProducts(list);
-          // Keep selection if still present
-          if (selected) {
-            const stillThere = list.find((p) => p.id === selected.id);
-            if (!stillThere) {
-              setSelected(null);
-              setFitments([]);
-            }
-          }
-        }
-      } catch (e: any) {
-        if (!abort) setErrorMsg(e?.message ?? String(e));
-      } finally {
-        if (!abort) setLoadingProducts(false);
-      }
-    })();
-    return () => { abort = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
+  // Fitments for selected product
+  const [fitments, setFitments] = useState<Fitment[]>([])
+  const [loadingFits, setLoadingFits] = useState<boolean>(false)
 
-  // Fetch fitments for selected product
-  useEffect(() => {
-    if (!selected) {
-      setFitments([]);
-      return;
-    }
-    let abort = false;
-    (async () => {
-      try {
-        setLoadingFitments(true);
-        const rows = await fetchFitments(selected.id);
-        if (!abort) setFitments(rows);
-      } catch (e: any) {
-        if (!abort) setErrorMsg(e?.message ?? String(e));
-      } finally {
-        if (!abort) setLoadingFitments(false);
-      }
-    })();
-    return () => { abort = true; };
-  }, [selected]);
+  // Form state for add/update
+  const [yearFrom, setYearFrom] = useState<string>('')
+  const [yearTo, setYearTo] = useState<string>('')
+  const [make, setMake] = useState<string>('')
+  const [model, setModel] = useState<string>('')
+  const [trim, setTrim] = useState<string>('')
+  const [chassis, setChassis] = useState<string>('')
 
-  // Handlers
-  function startAdd() {
-    if (!selected) return;
-    setEditing({
-      id: '', // empty id indicates "new"
-      productGid: selected.id,
-      yearFrom: null,
-      yearTo: null,
-      make: null,
-      model: null,
-      trim: null,
-      chassis: null,
-    });
-  }
+  const canSubmit = useMemo(() => {
+    return Boolean(selectedProduct && make.trim() && model.trim())
+  }, [selectedProduct, make, model])
 
-  function startEdit(row: FitmentRow) {
-    // clone to avoid editing the table row object directly
-    setEditing({ ...row });
-  }
-
-  function cancelEdit() {
-    setEditing(null);
-  }
-
-  async function submitEdit(e: React.FormEvent) {
-    e.preventDefault();
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    if (!editing) return;
+  // Search handler
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSearching(true)
     try {
-      const payload: FitmentRow = {
-        ...editing,
-        productGid: editing.productGid,
-        yearFrom: clampYear(editing.yearFrom),
-        yearTo: clampYear(editing.yearTo),
-        make: emptyToNull(editing.make),
-        model: emptyToNull(editing.model),
-        trim: emptyToNull(editing.trim),
-        chassis: emptyToNull(editing.chassis),
-      };
+      const items = await searchProducts(query)
+      setResults(items)
+    } catch (err) {
+      console.error(err)
+      setResults([])
+    } finally {
+      setSearching(false)
+    }
+  }
 
-      // validate basic required fields
-      if (!payload.productGid) throw new Error('Missing productGid');
-      if (!payload.make || !payload.model) throw new Error('Make and Model are required');
-
-      let saved: FitmentRow;
-      if (isEditing && editing.id) {
-        saved = await updateFitment(payload);
-      } else {
-        const { id, ...createBody } = payload;
-        saved = await createFitment(createBody as Omit<FitmentRow, 'id'>);
+  // When a product is chosen, load its fitments
+  useEffect(() => {
+    (async () => {
+      if (!selectedProduct) {
+        setFitments([])
+        return
       }
+      setLoadingFits(true)
+      try {
+        const rows = await listFitments(selectedProduct.id)
+        setFitments(rows)
+      } catch (err) {
+        console.error(err)
+        setFitments([])
+      } finally {
+        setLoadingFits(false)
+      }
+    })()
+  }, [selectedProduct])
 
-      // upsert locally
-      setFitments((prev) => {
-        const i = prev.findIndex((r) => r.id === saved.id);
-        if (i >= 0) {
-          const next = prev.slice();
-          next[i] = saved;
-          return next;
-        }
-        return [saved, ...prev];
-      });
+  // Add/Update fitment
+  const handleUpsert = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedProduct) return
 
-      setEditing(null);
-      setSuccessMsg('Saved.');
-    } catch (e: any) {
-      setErrorMsg(e?.message ?? String(e));
+    const payload: UpsertFitmentRequest = {
+      productGid: selectedProduct.id,
+      make: make.trim(),
+      model: model.trim(),
+      yearFrom: emptyToNull(yearFrom) !== null ? toIntOrNull(yearFrom) : null,
+      yearTo: emptyToNull(yearTo) !== null ? toIntOrNull(yearTo) : null,
+      trim: emptyToNull(trim),
+      chassis: emptyToNull(chassis),
     }
-  }
 
-  async function remove(row: FitmentRow) {
-    setErrorMsg(null);
-    setSuccessMsg(null);
     try {
-      await deleteFitment(row.id, row.productGid);
-      setFitments((prev) => prev.filter((r) => r.id !== row.id));
-      setSuccessMsg('Deleted.');
-    } catch (e: any) {
-      setErrorMsg(e?.message ?? String(e));
+      const saved = await upsertFitment(payload)
+      // Replace if exists (by unique key fields) or append
+      setFitments(prev => {
+        const idx = prev.findIndex(f =>
+          f.productGid === saved.productGid &&
+          f.make.toLowerCase() === saved.make.toLowerCase() &&
+          f.model.toLowerCase() === saved.model.toLowerCase() &&
+          (f.yearFrom ?? null) === (saved.yearFrom ?? null) &&
+          (f.yearTo ?? null) === (saved.yearTo ?? null) &&
+          (f.trim ?? null) === (saved.trim ?? null) &&
+          (f.chassis ?? null) === (saved.chassis ?? null)
+        )
+        if (idx >= 0) {
+          const copy = [...prev]
+          copy[idx] = saved
+          return copy
+        }
+        return [saved, ...prev]
+      })
+
+      // Clear form
+      setYearFrom('')
+      setYearTo('')
+      setMake('')
+      setModel('')
+      setTrim('')
+      setChassis('')
+    } catch (err) {
+      console.error(err)
+      alert((err as Error).message)
     }
   }
 
-  // ---------- UI ----------
+  // Delete fitment
+  const onDelete = async (fitmentId: string) => {
+    try {
+      await deleteFitment(fitmentId)
+      setFitments(prev => prev.filter(f => f.id !== fitmentId))
+    } catch (err) {
+      console.error(err)
+      alert((err as Error).message)
+    }
+  }
+
   return (
-    <main className="flex min-h-[calc(100vh-4rem)] text-neutral-900">
-      {/* Sidebar: product search/list */}
-      <aside className="w-80 shrink-0 border-r border-neutral-200 bg-neutral-50">
-        <div className="p-3 border-b border-neutral-200">
-          <h1 className="text-lg font-semibold">Fitments</h1>
-          <p className="text-sm text-neutral-600">Assign Year/Make/Model</p>
-        </div>
-        <div className="p-3 border-b border-neutral-200">
-          <input
-            className="w-full rounded-md border border-neutral-300 bg-white p-2 text-sm text-neutral-900 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="Search products…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-        <div className="overflow-auto">
-          {loadingProducts ? (
-            <div className="p-3 text-sm text-neutral-600">Loading products…</div>
-          ) : products.length === 0 ? (
-            <div className="p-3 text-sm text-neutral-600">No products.</div>
-          ) : (
-            <ul>
-              {products.map((p) => (
-                <li key={p.id}>
-                  <button
-                    className={`flex w-full gap-3 p-3 text-left hover:bg-neutral-100 ${
-                      selected?.id === p.id ? 'bg-neutral-100' : ''
-                    }`}
-                    onClick={() => setSelected(p)}
-                  >
-                    {/* Using <img> to avoid next/image warnings server-side */}
-                    {p.imageUrl ? (
-                      <img
-                        className="h-10 w-10 rounded border border-neutral-200 object-cover"
-                        src={p.imageUrl}
-                        alt=""
-                      />
-                    ) : (
-                      <div className="h-10 w-10 rounded border border-neutral-200 bg-neutral-100" />
-                    )}
-                    <div className="min-w-0">
-                      <div className="truncate text-[13px] font-semibold text-neutral-900">{p.title}</div>
-                      <div className="truncate text-[12px] text-neutral-600">{p.handle}</div>
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </aside>
+    <main className="p-6">
+      <h1 className="text-2xl font-bold mb-4 text-zinc-900">Fitment Admin</h1>
 
-      {/* Main panel */}
-      <section className="flex-1 overflow-auto">
-        <header className="flex items-center justify-between border-b border-neutral-200 bg-white px-5 py-3">
+      {/* Search */}
+      <form onSubmit={handleSearch} className="mb-4 flex items-center gap-2">
+        <input
+          className="border rounded-md px-3 py-2 w-full text-zinc-900"
+          placeholder="Search products by title or handle..."
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <button
+          type="submit"
+          className="bg-blue-600 hover:bg-blue-700 text-white rounded-md px-4 py-2"
+          disabled={searching}
+        >
+          {searching ? 'Searching…' : 'Search'}
+        </button>
+      </form>
+
+      {/* Results */}
+      {results.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-lg font-semibold mb-2 text-zinc-900">Results</h2>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {results.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => setSelectedProduct(p)}
+                className={`flex items-center gap-3 border rounded-lg p-3 text-left hover:shadow-sm transition ${
+                  selectedProduct?.id === p.id ? 'ring-2 ring-blue-500' : ''
+                }`}
+              >
+                <div className="relative w-14 h-14 shrink-0 rounded-md overflow-hidden bg-zinc-100">
+                  {p.imageUrl ? (
+                    <Image
+                      src={p.imageUrl}
+                      alt={p.title}
+                      fill
+                      sizes="56px"
+                      className="object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-zinc-200" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <div className="font-medium text-zinc-900 truncate">{p.title}</div>
+                  <div className="text-xs text-zinc-600 truncate">Handle: {p.handle}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Selected product + Fitments */}
+      {selectedProduct && (
+        <section className="mt-6">
+          <header className="flex items-center gap-3 mb-4">
+            <div className="relative w-16 h-16 overflow-hidden rounded-md bg-zinc-100">
+              {selectedProduct.imageUrl ? (
+                <Image
+                  src={selectedProduct.imageUrl}
+                  alt={selectedProduct.title}
+                  fill
+                  sizes="64px"
+                  className="object-cover"
+                />
+              ) : (
+                <div className="w-full h-full bg-zinc-200" />
+              )}
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold text-zinc-900">{selectedProduct.title}</h2>
+              <div className="text-sm text-zinc-700 break-all">{selectedProduct.id}</div>
+            </div>
+          </header>
+
+          {/* Add/Update form */}
+          <form onSubmit={handleUpsert} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
+            <input
+              className="border rounded-md px-3 py-2 text-zinc-900"
+              placeholder="Make (e.g. Porsche)"
+              value={make}
+              onChange={(e) => setMake(e.target.value)}
+              required
+            />
+            <input
+              className="border rounded-md px-3 py-2 text-zinc-900"
+              placeholder="Model (e.g. 911)"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              required
+            />
+            <input
+              className="border rounded-md px-3 py-2 text-zinc-900"
+              placeholder="Trim (optional)"
+              value={trim}
+              onChange={(e) => setTrim(e.target.value)}
+            />
+            <input
+              className="border rounded-md px-3 py-2 text-zinc-900"
+              placeholder="Chassis (optional)"
+              value={chassis}
+              onChange={(e) => setChassis(e.target.value)}
+            />
+            <input
+              className="border rounded-md px-3 py-2 text-zinc-900"
+              placeholder="Year From (optional)"
+              inputMode="numeric"
+              value={yearFrom}
+              onChange={(e) => setYearFrom(e.target.value)}
+            />
+            <input
+              className="border rounded-md px-3 py-2 text-zinc-900"
+              placeholder="Year To (optional)"
+              inputMode="numeric"
+              value={yearTo}
+              onChange={(e) => setYearTo(e.target.value)}
+            />
+
+            <div className="sm:col-span-2 lg:col-span-3">
+              <button
+                type="submit"
+                className="bg-green-600 hover:bg-green-700 text-white rounded-md px-4 py-2"
+                disabled={!canSubmit}
+              >
+                {canSubmit ? 'Add / Update Fitment' : 'Fill required fields'}
+              </button>
+            </div>
+          </form>
+
+          {/* Fitments list */}
           <div>
-            <div className="text-base font-semibold text-neutral-900">
-              {selected ? selected.title : 'Select a product'}
-            </div>
-            {selected && (
-              <div className="text-sm text-neutral-600">@{selected.handle}</div>
-            )}
-          </div>
-          {selected && (
-            <button
-              onClick={startAdd}
-              className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
-            >
-              + Add Fitment
-            </button>
-          )}
-        </header>
-
-        {/* Alerts */}
-        {(errorMsg || successMsg) && (
-          <div className="px-5 pt-4">
-            {errorMsg && (
-              <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {errorMsg}
+            <h3 className="text-lg font-semibold mb-2 text-zinc-900">Existing Fitments</h3>
+            {loadingFits ? (
+              <div className="text-zinc-700">Loading…</div>
+            ) : fitments.length === 0 ? (
+              <div className="text-zinc-700">No fitments yet for this product.</div>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2">
+                {fitments.map((f) => (
+                  <div key={f.id} className="border rounded-lg p-3">
+                    <div className="text-zinc-900 font-medium">
+                      {f.make} {f.model}
+                    </div>
+                    <div className="text-sm text-zinc-700">
+                      {f.yearFrom ?? '—'} – {f.yearTo ?? '—'}
+                      {f.trim ? ` • Trim: ${f.trim}` : ''}
+                      {f.chassis ? ` • Chassis: ${f.chassis}` : ''}
+                    </div>
+                    <div className="mt-2">
+                      <button
+                        onClick={() => onDelete(f.id)}
+                        className="text-red-600 text-sm hover:underline"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
-            {successMsg && (
-              <div className="mb-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
-                {successMsg}
-              </div>
-            )}
           </div>
-        )}
-
-        {/* Table or empty */}
-        {!selected ? (
-          <div className="p-5 text-sm text-neutral-700">Search and select a product to manage fitments.</div>
-        ) : loadingFitments ? (
-          <div className="p-5 text-sm text-neutral-700">Loading fitments…</div>
-        ) : fitments.length === 0 ? (
-          <div className="p-5 text-sm text-neutral-700">No fitments yet.</div>
-        ) : (
-          <div className="p-5">
-            <div className="overflow-x-auto rounded-md border border-neutral-200">
-              <table className="min-w-full border-collapse">
-                <thead>
-                  <tr className="bg-neutral-50 text-neutral-700">
-                    <th className="border-b border-neutral-200 px-3 py-2 text-left text-sm font-medium">Years</th>
-                    <th className="border-b border-neutral-200 px-3 py-2 text-left text-sm font-medium">Make</th>
-                    <th className="border-b border-neutral-200 px-3 py-2 text-left text-sm font-medium">Model</th>
-                    <th className="border-b border-neutral-200 px-3 py-2 text-left text-sm font-medium">Trim</th>
-                    <th className="border-b border-neutral-200 px-3 py-2 text-left text-sm font-medium">Chassis</th>
-                    <th className="border-b border-neutral-200 px-3 py-2 text-left text-sm font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {fitments.map((r) => (
-                    <tr key={r.id} className="odd:bg-white even:bg-neutral-50">
-                      <td className="border-b border-neutral-200 px-3 py-2 text-sm text-neutral-900">
-                        {r.yearFrom ?? '—'} {r.yearTo ? `– ${r.yearTo}` : ''}
-                      </td>
-                      <td className="border-b border-neutral-200 px-3 py-2 text-sm text-neutral-900">{r.make ?? '—'}</td>
-                      <td className="border-b border-neutral-200 px-3 py-2 text-sm text-neutral-900">{r.model ?? '—'}</td>
-                      <td className="border-b border-neutral-200 px-3 py-2 text-sm text-neutral-900">{r.trim ?? '—'}</td>
-                      <td className="border-b border-neutral-200 px-3 py-2 text-sm text-neutral-900">{r.chassis ?? '—'}</td>
-                      <td className="border-b border-neutral-200 px-3 py-2 text-sm">
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => startEdit(r)}
-                            className="rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs font-medium text-neutral-800 hover:bg-neutral-100"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => remove(r)}
-                            className="rounded-md border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Drawer / Form */}
-        {editing && (
-          <div className="px-5 pb-8">
-            <form
-              onSubmit={submitEdit}
-              className="mt-2 grid grid-cols-1 gap-3 rounded-md border border-neutral-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-3"
-            >
-              <div>
-                <label className="mb-1 block text-sm font-medium text-neutral-800">Year From</label>
-                <input
-                  type="number"
-                  min={1900}
-                  max={2100}
-                  value={editing.yearFrom ?? ''}
-                  onChange={(e) => setEditing({ ...editing, yearFrom: clampYear(intOrNull(e.target.value)) })}
-                  className="w-full rounded-md border border-neutral-300 bg-white p-2 text-sm text-neutral-900"
-                  placeholder="e.g. 2005"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-neutral-800">Year To</label>
-                <input
-                  type="number"
-                  min={1900}
-                  max={2100}
-                  value={editing.yearTo ?? ''}
-                  onChange={(e) => setEditing({ ...editing, yearTo: clampYear(intOrNull(e.target.value)) })}
-                  className="w-full rounded-md border border-neutral-300 bg-white p-2 text-sm text-neutral-900"
-                  placeholder="e.g. 2010"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-neutral-800">Make *</label>
-                <input
-                  value={editing.make ?? ''}
-                  onChange={(e) => setEditing({ ...editing, make: emptyToNull(e.target.value) })}
-                  className="w-full rounded-md border border-neutral-300 bg-white p-2 text-sm text-neutral-900"
-                  placeholder="e.g. Porsche"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-neutral-800">Model *</label>
-                <input
-                  value={editing.model ?? ''}
-                  onChange={(e) => setEditing({ ...editing, model: emptyToNull(e.target.value) })}
-                  className="w-full rounded-md border border-neutral-300 bg-white p-2 text-sm text-neutral-900"
-                  placeholder="e.g. 911"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-neutral-800">Trim (optional)</label>
-                <input
-                  value={editing.trim ?? ''}
-                  onChange={(e) => setEditing({ ...editing, trim: emptyToNull(e.target.value) })}
-                  className="w-full rounded-md border border-neutral-300 bg-white p-2 text-sm text-neutral-900"
-                  placeholder="e.g. GT3 RS"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-neutral-800">Chassis (optional)</label>
-                <input
-                  value={editing.chassis ?? ''}
-                  onChange={(e) => setEditing({ ...editing, chassis: emptyToNull(e.target.value) })}
-                  className="w-full rounded-md border border-neutral-300 bg-white p-2 text-sm text-neutral-900"
-                  placeholder="e.g. 992"
-                />
-              </div>
-
-              <div className="col-span-full mt-2 flex items-center gap-2">
-                <button
-                  type="submit"
-                  className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
-                >
-                  {isEditing ? 'Update' : 'Add fitment'}
-                </button>
-                <button
-                  type="button"
-                  onClick={cancelEdit}
-                  className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-100"
-                >
-                  Cancel
-                </button>
-                <span className="text-xs text-neutral-600">
-                  Required: Make & Model. Years optional (range), Trim/Chassis optional.
-                </span>
-              </div>
-            </form>
-          </div>
-        )}
-      </section>
+        </section>
+      )}
     </main>
-  );
+  )
 }
