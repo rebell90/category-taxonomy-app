@@ -62,7 +62,7 @@ async function productGidsByYMM(params: {
   const { year, make, model } = params;
   if (!year && !make && !model) return null; // no YMM filter requested
 
-  const hasTable = await tableExists('ProductFitment');
+  const hasTable = await tableExists('public', 'ProductFitment');
   if (!hasTable) return null; // silently skip YMM if table not present
 
   // Build a safe SQL filter
