@@ -1,7 +1,7 @@
-// src/app/api/fitments/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 
+// Define the shape of the request payload
 interface FitmentPayload {
   productGid: string
   yearFrom?: number | null
@@ -18,15 +18,17 @@ export async function GET() {
       orderBy: [{ make: 'asc' }, { model: 'asc' }, { yearFrom: 'asc' }],
     })
     return NextResponse.json(fitments)
-  } catch (err: unknown) {   // 👈 mark as unknown, not any
-    console.error('Error fetching fitments:', err)
+  } catch (err: unknown) {  // 👈 strict
+    if (err instanceof Error) {
+      console.error('Error fetching fitments:', err.message)
+    }
     return NextResponse.json({ error: 'Failed to fetch fitments' }, { status: 500 })
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as FitmentPayload   // 👈 cast instead of any
+    const body: FitmentPayload = await req.json() // 👈 typed instead of any
 
     if (!body.productGid || !body.make || !body.model) {
       return NextResponse.json(
@@ -48,8 +50,10 @@ export async function POST(req: NextRequest) {
     })
 
     return NextResponse.json(created, { status: 201 })
-  } catch (err: unknown) {   // 👈 strict typing
-    console.error('Error creating fitment:', err)
+  } catch (err: unknown) {  // 👈 strict
+    if (err instanceof Error) {
+      console.error('Error creating fitment:', err.message)
+    }
     return NextResponse.json({ error: 'Failed to create fitment' }, { status: 500 })
   }
 }
@@ -64,8 +68,10 @@ export async function DELETE(req: NextRequest) {
 
     await prisma.productFitment.delete({ where: { id } })
     return NextResponse.json({ success: true })
-  } catch (err: unknown) {   // 👈 strict typing
-    console.error('Error deleting fitment:', err)
+  } catch (err: unknown) {  // 👈 strict
+    if (err instanceof Error) {
+      console.error('Error deleting fitment:', err.message)
+    }
     return NextResponse.json({ error: 'Failed to delete fitment' }, { status: 500 })
   }
 }
