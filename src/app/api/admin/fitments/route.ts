@@ -1,66 +1,39 @@
+// src/app/api/admin/fitments/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import type { ProductFitment } from '@prisma/client'
+import type { Prisma } from '@prisma/client'
 
-/** Build a strongly-typed Prisma where clause from query params */
-function buildWhere(searchParams: URLSearchParams) {
-  const make  = searchParams.get('make')  || undefined
-  const model = searchParams.get('model') || undefined
-  const yearParam = searchParams.get('year')
-  const year = yearParam ? Number(yearParam) : undefined
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url)
   const productGid = searchParams.get('productGid') || undefined
+  const make = searchParams.get('make') || undefined
+  const model = searchParams.get('model') || undefined
+  const year = searchParams.get('year')
+  const yearNum = year ? Number(year) : undefined
 
-  const where: Parameters<typeof prisma.productFitment.findMany>[0]['where'] = {}
+  // Use Prisma’s type directly
+  const where: Prisma.ProductFitmentWhereInput = {}
 
-  if (productGid) where.productGid = { equals: productGid }
-  if (make)       where.make       = { equals: make }
-  if (model)      where.model      = { equals: model }
-  if (year) {
+  if (productGid) where.productGid = productGid
+  if (make) where.make = make
+  if (model) where.model = model
+  if (yearNum && Number.isFinite(yearNum)) {
+    // overlap: (yearFrom IS NULL OR yearFrom <= year) AND (yearTo IS NULL OR yearTo >= year)
     where.AND = [
-      { yearFrom: { lte: year } },
-      { yearTo:   { gte: year } },
+      { OR: [{ yearFrom: null }, { yearFrom: { lte: yearNum } }] },
+      { OR: [{ yearTo: null }, { yearTo: { gte: yearNum } }] },
     ]
   }
 
-  return where
+  const fitments = await prisma.productFitment.findMany({
+    where,
+    orderBy: [{ make: 'asc' }, { model: 'asc' }, { yearFrom: 'asc' }],
+  })
+
+  return NextResponse.json({ fitments })
 }
 
-/** GET /api/admin/fitments?make=&model=&year=&productGid=&page=&pageSize= */
-export async function GET(req: NextRequest) {
-  try {
-    const { searchParams } = new URL(req.url)
-    const page     = Math.max(1, Number(searchParams.get('page') || 1))
-    const pageSize = Math.min(100, Math.max(1, Number(searchParams.get('pageSize') || 25)))
-    const skip     = (page - 1) * pageSize
-    const take     = pageSize
-
-    const where = buildWhere(searchParams)
-
-    const [items, total] = await Promise.all([
-      prisma.productFitment.findMany({
-        where,
-        orderBy: [{ make: 'asc' }, { model: 'asc' }, { yearFrom: 'asc' }],
-        skip,
-        take,
-      }),
-      prisma.productFitment.count({ where }),
-    ])
-
-    return NextResponse.json({
-      items,
-      page,
-      pageSize,
-      total,
-      pages: Math.ceil(total / pageSize),
-    })
-  } catch (err) {
-    console.error('GET /api/admin/fitments error:', err)
-    return NextResponse.json({ error: 'Failed to fetch fitments' }, { status: 500 })
-  }
-}
-
-/** Basic shape for POST/PUT bodies (no `any`) */
-type FitmentUpsertInput = {
+type PostBody = {
   productGid: string
   make: string
   model: string
@@ -70,85 +43,45 @@ type FitmentUpsertInput = {
   chassis?: string | null
 }
 
-/** POST /api/admin/fitments  (create) */
 export async function POST(req: NextRequest) {
-  try {
-    const body = (await req.json()) as FitmentUpsertInput
+  const body = (await req.json()) as PostBody
+  const { productGid, make, model } = body
 
-    if (!body.productGid || !body.make || !body.model) {
-      return NextResponse.json({ error: 'productGid, make, and model are required' }, { status: 400 })
-    }
+  if (!productGid || !make?.trim() || !model?.trim()) {
+    return NextResponse.json({ error: 'productGid, make, and model are required' }, { status: 400 })
+  }
 
-    const yearFrom = body.yearFrom ?? null
-    const yearTo   = body.yearTo   ?? null
-    if (yearFrom !== null && yearTo !== null && yearFrom > yearTo) {
-      return NextResponse.json({ error: 'yearFrom cannot be greater than yearTo' }, { status: 400 })
-    }
+  // Normalize numbers / empties
+  const yearFrom = body.yearFrom ?? null
+  const yearTo = body.yearTo ?? null
+  const trim = body.trim?.trim() ? body.trim : null
+  const chassis = body.chassis?.trim() ? body.chassis : null
 
-    const created = await prisma.productFitment.create({
-      data: {
-        productGid: body.productGid,
-        make: body.make,
-        model: body.model,
+  const saved = await prisma.productFitment.upsert({
+    where: {
+      productGid_make_model_yearFrom_yearTo_trim_chassis: {
+        productGid,
+        make,
+        model,
         yearFrom,
         yearTo,
-        trim: body.trim ?? null,
-        chassis: body.chassis ?? null,
+        trim,
+        chassis,
       },
-    })
+    },
+    create: { productGid, make, model, yearFrom, yearTo, trim, chassis },
+    update: { productGid, make, model, yearFrom, yearTo, trim, chassis },
+  })
 
-    return NextResponse.json(created, { status: 201 })
-  } catch (err) {
-    console.error('POST /api/admin/fitments error:', err)
-    return NextResponse.json({ error: 'Failed to create fitment' }, { status: 500 })
-  }
+  return NextResponse.json(saved)
 }
 
-/** PUT /api/admin/fitments  (update by id) */
-export async function PUT(req: NextRequest) {
-  try {
-    const { id, ...rest } = (await req.json()) as Partial<ProductFitment> & { id?: string }
-    if (!id) {
-      return NextResponse.json({ error: 'id is required' }, { status: 400 })
-    }
+type DeleteBody = { id: string }
 
-    const data: Partial<ProductFitment> = {}
-    if (typeof rest.productGid === 'string') data.productGid = rest.productGid
-    if (typeof rest.make === 'string')       data.make       = rest.make
-    if (typeof rest.model === 'string')      data.model      = rest.model
-    if (typeof rest.yearFrom === 'number' || rest.yearFrom === null) data.yearFrom = rest.yearFrom ?? null
-    if (typeof rest.yearTo === 'number'   || rest.yearTo === null)   data.yearTo   = rest.yearTo ?? null
-    if (typeof rest.trim === 'string'     || rest.trim === null)     data.trim     = rest.trim ?? null
-    if (typeof rest.chassis === 'string'  || rest.chassis === null)  data.chassis  = rest.chassis ?? null
-
-    if (data.yearFrom != null && data.yearTo != null && data.yearFrom > data.yearTo) {
-      return NextResponse.json({ error: 'yearFrom cannot be greater than yearTo' }, { status: 400 })
-    }
-
-    const updated = await prisma.productFitment.update({
-      where: { id },
-      data,
-    })
-
-    return NextResponse.json(updated)
-  } catch (err) {
-    console.error('PUT /api/admin/fitments error:', err)
-    return NextResponse.json({ error: 'Failed to update fitment' }, { status: 500 })
-  }
-}
-
-/** DELETE /api/admin/fitments  (delete by id) */
 export async function DELETE(req: NextRequest) {
-  try {
-    const { id } = (await req.json()) as { id?: string }
-    if (!id) {
-      return NextResponse.json({ error: 'id is required' }, { status: 400 })
-    }
+  const { id } = (await req.json()) as DeleteBody
+  if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
 
-    await prisma.productFitment.delete({ where: { id } })
-    return NextResponse.json({ success: true })
-  } catch (err) {
-    console.error('DELETE /api/admin/fitments error:', err)
-    return NextResponse.json({ error: 'Failed to delete fitment' }, { status: 500 })
-  }
+  await prisma.productFitment.delete({ where: { id } })
+  return NextResponse.json({ success: true })
 }
