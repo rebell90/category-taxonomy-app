@@ -11,14 +11,12 @@ export async function GET(req: NextRequest) {
   const year = searchParams.get('year')
   const yearNum = year ? Number(year) : undefined
 
-  // Use Prisma’s type directly
   const where: Prisma.ProductFitmentWhereInput = {}
 
   if (productGid) where.productGid = productGid
   if (make) where.make = make
   if (model) where.model = model
   if (yearNum && Number.isFinite(yearNum)) {
-    // overlap: (yearFrom IS NULL OR yearFrom <= year) AND (yearTo IS NULL OR yearTo >= year)
     where.AND = [
       { OR: [{ yearFrom: null }, { yearFrom: { lte: yearNum } }] },
       { OR: [{ yearTo: null }, { yearTo: { gte: yearNum } }] },
@@ -43,37 +41,66 @@ type PostBody = {
   chassis?: string | null
 }
 
+/**
+ * Create or update a fitment uniquely identified by
+ * (productGid, make, model, yearFrom, yearTo, trim, chassis).
+ * We avoid `upsert` on the compound unique to dodge TS nullability friction.
+ */
 export async function POST(req: NextRequest) {
   const body = (await req.json()) as PostBody
-  const { productGid, make, model } = body
 
-  if (!productGid || !make?.trim() || !model?.trim()) {
-    return NextResponse.json({ error: 'productGid, make, and model are required' }, { status: 400 })
+  const productGid = body.productGid?.trim()
+  const make = body.make?.trim()
+  const model = body.model?.trim()
+  if (!productGid || !make || !model) {
+    return NextResponse.json(
+      { error: 'productGid, make, and model are required' },
+      { status: 400 }
+    )
   }
 
-  // Normalize numbers / empties
-  const yearFrom = body.yearFrom ?? null
-  const yearTo = body.yearTo ?? null
-  const trim = body.trim?.trim() ? body.trim : null
-  const chassis = body.chassis?.trim() ? body.chassis : null
+  const yearFrom: number | null =
+    typeof body.yearFrom === 'number' && Number.isFinite(body.yearFrom)
+      ? body.yearFrom
+      : null
+  const yearTo: number | null =
+    typeof body.yearTo === 'number' && Number.isFinite(body.yearTo)
+      ? body.yearTo
+      : null
+  const trim: string | null = body.trim?.trim() ? body.trim.trim() : null
+  const chassis: string | null = body.chassis?.trim() ? body.chassis.trim() : null
 
-  const saved = await prisma.productFitment.upsert({
+  // Find a matching row (treat nulls as exact matches)
+  const existing = await prisma.productFitment.findFirst({
     where: {
-      productGid_make_model_yearFrom_yearTo_trim_chassis: {
-        productGid,
-        make,
-        model,
+      productGid,
+      make,
+      model,
+      yearFrom,
+      yearTo,
+      trim,
+      chassis,
+    },
+  })
+
+  if (existing) {
+    const updated = await prisma.productFitment.update({
+      where: { id: existing.id },
+      data: {
+        // updateable fields — if you add more columns later, include them here
         yearFrom,
         yearTo,
         trim,
         chassis,
       },
-    },
-    create: { productGid, make, model, yearFrom, yearTo, trim, chassis },
-    update: { productGid, make, model, yearFrom, yearTo, trim, chassis },
-  })
+    })
+    return NextResponse.json(updated)
+  }
 
-  return NextResponse.json(saved)
+  const created = await prisma.productFitment.create({
+    data: { productGid, make, model, yearFrom, yearTo, trim, chassis },
+  })
+  return NextResponse.json(created)
 }
 
 type DeleteBody = { id: string }
