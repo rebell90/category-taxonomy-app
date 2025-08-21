@@ -10,6 +10,7 @@ const links = [
   { href: '/dashboard/tree', label: 'View Category Tree' },
   { href: '/dashboard/categories', label: 'Manage Category Tree' },
   { href: '/dashboard/fitments', label: 'Add Fitments' },
+  { href: '/dashboard/product-fitments', label: 'Product + Fitments View' },
   { href: '/dashboard/assign', label: 'Assign Products to Categories' },
 ]
 
