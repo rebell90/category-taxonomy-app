@@ -25,8 +25,8 @@ export default function DashboardHome() {
           </p>
         </a>
 
-         <a href="/dashboard/product-fitments" className="block border rounded-lg p-5 hover:shadow">
-          <div className="text-lg text-gray-600 font-semibold">Producr + Fitment Tags</div>
+         <a href="/dashboard/fitments-assign" className="block border rounded-lg p-5 hover:shadow">
+          <div className="text-lg text-gray-600 font-semibold">Product + Fitment Tags</div>
           <p className="text-sm text-gray-600 mt-1">
             Link products to fitment tags.
           </p>
