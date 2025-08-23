@@ -1,8 +1,6 @@
 'use client';
 
-import type { JSX } from 'react';
-
-import { useEffect, useMemo, useState} from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 type FitTermType = 'MAKE' | 'MODEL' | 'TRIM' | 'CHASSIS';
 
@@ -36,10 +34,16 @@ export default function FitTermsPage() {
   const makes = useMemo(() => flat.filter(f => f.type === 'MAKE'), [flat]);
   const models = useMemo(() => flat.filter(f => f.type === 'MODEL'), [flat]);
 
+  // VALID PARENTS:
+  // MODEL -> MAKE
+  // TRIM  -> MODEL
+  // CHASSIS -> MAKE or MODEL
+  // MAKE -> none
   const validParents = useMemo(() => {
     if (type === 'MODEL') return makes;
     if (type === 'TRIM')  return models;
-    return []; // MAKE, CHASSIS default to no parent (or you can allow any)
+    if (type === 'CHASSIS') return [...makes, ...models];
+    return [];
   }, [type, makes, models]);
 
   async function load() {
@@ -50,7 +54,7 @@ export default function FitTermsPage() {
       const json = (await res.json()) as TreeResponse;
       setTree(json.tree);
       setFlat(json.rows);
-    } catch (e) {
+    } catch {
       setErr('Failed to load fit terms');
     } finally {
       setLoading(false);
@@ -103,7 +107,6 @@ export default function FitTermsPage() {
         body: JSON.stringify({
           id: editing.id,
           name: name.trim(),
-          // Allow reparent from UI if you want:
           parentId: parentId === '' ? null : parentId,
         }),
       });
@@ -151,9 +154,7 @@ export default function FitTermsPage() {
         {nodes.map(n => (
           <li key={n.id}>
             <div className="flex items-center gap-2">
-              <span className="text-gray-900 font-medium">
-                {TYPE_LABELS[n.type]}:
-              </span>
+              <span className="text-gray-900 font-medium">{TYPE_LABELS[n.type]}:</span>
               <span className="text-gray-800">{n.name}</span>
               <button
                 type="button"
@@ -183,7 +184,10 @@ export default function FitTermsPage() {
 
   return (
     <main className="p-6">
-      <h1 className="text-2xl font-bold text-gray-900 mb-4">Manage Fitments</h1>
+      <h1 className="text-2xl font-bold text-gray-900 mb-1">Manage Fitments</h1>
+      <p className="text-sm text-gray-700 mb-4">
+        Years are set when assigning fitments to products (as a range). This page is for your master Make / Model / Trim / Chassis list.
+      </p>
 
       <form
         onSubmit={editing ? handleUpdate : handleSubmit}
@@ -199,7 +203,6 @@ export default function FitTermsPage() {
               onChange={e => {
                 const t = e.target.value as FitTermType;
                 setType(t);
-                // reset parent when switching types
                 setParentId(null);
               }}
               className="border rounded-md p-2 w-full text-gray-900"
@@ -222,10 +225,10 @@ export default function FitTermsPage() {
             />
           </label>
 
-          {(type === 'MODEL' || type === 'TRIM') && (
+          {(type === 'MODEL' || type === 'TRIM' || type === 'CHASSIS') && (
             <label className="block">
               <span className="block text-sm font-medium text-gray-800 mb-1">
-                Parent {type === 'MODEL' ? 'Make' : 'Model'}
+                Parent {type === 'MODEL' ? 'Make' : type === 'TRIM' ? 'Model' : 'Make or Model'}
               </span>
               <select
                 className="border rounded-md p-2 w-full text-gray-900"
@@ -234,7 +237,9 @@ export default function FitTermsPage() {
               >
                 <option value="">— Select —</option>
                 {validParents.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
+                  <option key={p.id} value={p.id}>
+                    {p.name} {p.type === 'MODEL' ? '(Model)' : p.type === 'MAKE' ? '(Make)' : ''}
+                  </option>
                 ))}
               </select>
             </label>
