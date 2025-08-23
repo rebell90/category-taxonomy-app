@@ -49,48 +49,82 @@ export default function FitmentsAssignPage() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [fitmentsByProduct, setFitmentsByProduct] = useState<Record<string, Fitment[]>>({});
 
-  const fetchProducts = useCallback(
-    async (append: boolean) => {
-      setLoading(true);
-      try {
-        const url = new URL('/api/admin/products', window.location.origin);
-        if (q.trim()) url.searchParams.set('q', q.trim());
-        if (cursor) url.searchParams.set('after', cursor);
-        url.searchParams.set('first', '20');
+// add near other state:
+const [errText, setErrText] = useState<string | null>(null);
 
-        const res = await fetch(url.toString(), { cache: 'no-store' });
-        if (!res.ok) throw new Error(await res.text());
-        const json = (await res.json()) as ProductsResponse;
+const fetchProducts = useCallback(
+  async (append: boolean) => {
+    setLoading(true);
+    setErrText(null);
+    try {
+      // ---- Try GET first
+      const getUrl = new URL('/api/admin/products', window.location.origin);
+      if (q.trim()) getUrl.searchParams.set('q', q.trim());
+      if (cursor) getUrl.searchParams.set('after', cursor);
+      getUrl.searchParams.set('first', '20');
 
-        const nodes = (json.products?.edges ?? []).map(e => e.node);
-        setProducts(prev => (append ? [...prev, ...nodes] : nodes));
+      let res = await fetch(getUrl.toString(), { cache: 'no-store' });
 
-        const pi = json.products?.pageInfo;
-        setHasNext(Boolean(pi?.hasNextPage));
-        setNextCursor(pi?.endCursor ?? null);
-
-        // batch-load fitments
-        if (nodes.length) {
-          const batch = await fetch('/api/admin/fitments/by-products', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ productGids: nodes.map(n => n.id) }),
-          });
-          if (batch.ok) {
-            const data = (await batch.json()) as FitmentsBatchResponse;
-            const merged: Record<string, Fitment[]> = {};
-            for (const item of data.items) merged[item.productGid] = item.fitments;
-            setFitmentsByProduct(prev => ({ ...prev, ...merged }));
-          }
-        }
-      } catch (err) {
-        console.error('fetchProducts error', err);
-      } finally {
-        setLoading(false);
+      // ---- If GET failed (404/405/etc), try POST fallback
+      if (!res.ok) {
+        const postBody = { q: q.trim(), first: 20, after: cursor };
+        res = await fetch('/api/admin/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(postBody),
+        });
       }
-    },
-    [q, cursor]
-  );
+
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(`Products API ${res.status}: ${t.slice(0, 300)}`);
+      }
+
+      const json = (await res.json()) as ProductsResponse;
+
+      // Accept a couple shapes people commonly return
+      const edges = json.products?.edges
+        ?? (json as any).edges
+        ?? [];
+
+      const pageInfo = json.products?.pageInfo
+        ?? (json as any).pageInfo
+        ?? { hasNextPage: false, endCursor: null };
+
+      const nodes = edges.map((e: { node: ProductNode }) => e.node);
+      setProducts(prev => (append ? [...prev, ...nodes] : nodes));
+      setHasNext(Boolean(pageInfo.hasNextPage));
+      setNextCursor(pageInfo.endCursor ?? null);
+
+      // Batch-load fitments for visible nodes
+      if (nodes.length) {
+        const batch = await fetch('/api/admin/fitments/by-products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ productGids: nodes.map(n => n.id) }),
+        });
+
+        if (batch.ok) {
+          const data = (await batch.json()) as {
+            items: Array<{ productGid: string; fitments: Fitment[] }>;
+          };
+          const merged: Record<string, Fitment[]> = {};
+          for (const item of data.items) merged[item.productGid] = item.fitments;
+          setFitmentsByProduct(prev => ({ ...prev, ...merged }));
+        } else {
+          // non-fatal
+          console.warn('fitments/by-products failed', await batch.text());
+        }
+      }
+    } catch (err) {
+      console.error('fetchProducts error', err);
+      setErrText(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  },
+  [q, cursor]
+);
 
   useEffect(() => {
     fetchProducts(false);
