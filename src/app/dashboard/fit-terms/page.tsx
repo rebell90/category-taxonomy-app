@@ -1,7 +1,8 @@
-/// <reference types="react" />
 'use client';
 
-import { useEffect, useMemo, useState, JSX } from 'react';
+import type { JSX } from 'react';
+
+import { useEffect, useMemo, useState} from 'react';
 
 type FitTermType = 'MAKE' | 'MODEL' | 'TRIM' | 'CHASSIS';
 
