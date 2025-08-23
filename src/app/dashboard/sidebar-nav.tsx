@@ -9,9 +9,6 @@ const links = [
   { href: '/dashboard/audit', label: 'Product + Category View' },
   { href: '/dashboard/tree', label: 'View Category Tree' },
   { href: '/dashboard/categories', label: 'Manage Category Tree' },
-  { href: '/dashboard/fitments', label: 'Add Fitments' },
-  { href: '/dashboard/fitments-assign', label: 'Product + Fitments View' },
-  { href: '/dashboard/assign', label: 'Assign Products to Categories' },
 ]
 
 export function SidebarNav() {

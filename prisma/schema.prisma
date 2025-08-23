@@ -53,3 +53,25 @@ model ProductFitment {
   @@index([yearFrom, yearTo])
   @@unique([productGid, make, model, yearFrom, yearTo, trim, chassis])
 }
+enum FitTermType {
+  MAKE
+  MODEL
+  TRIM
+  CHASSIS
+}
+
+model FitTerm {
+  id        String      @id @default(cuid())
+  type      FitTermType
+  name      String
+  parentId  String?     // MODEL -> MAKE, TRIM -> MODEL; CHASSIS can be standalone or parented if you want
+  parent    FitTerm?    @relation("FitTermParentChild", fields: [parentId], references: [id])
+  children  FitTerm[]   @relation("FitTermParentChild")
+
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@index([type])
+  @@index([parentId])
+  @@unique([type, name, parentId])
+}
