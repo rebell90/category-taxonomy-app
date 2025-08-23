@@ -1,24 +1,28 @@
 'use client';
 
-import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Image from 'next/image';
 
 // ---------- Types ----------
+type ProductStatus = 'ACTIVE' | 'DRAFT' | 'ARCHIVED';
+
+type ProductImage = { url: string | null };
+
 type ProductNode = {
-  id: string; // gid://shopify/Product/...
+  id: string;          // Admin GID (gid://shopify/Product/123)
   handle: string;
   title: string;
-  status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT' | string;
-  onlineStoreUrl?: string | null;
-  featuredImage?: { url?: string | null } | null;
+  status: ProductStatus;
+  featuredImage?: ProductImage | null;
 };
 
-type ProductsResponse = {
-  products: {
-    edges: Array<{ node: ProductNode }>;
-    pageInfo: { hasNextPage: boolean; endCursor?: string | null };
-  };
-};
+type Edge<T> = { node: T; cursor?: string | null };
+
+type PageInfo = { hasNextPage: boolean; endCursor: string | null };
+
+type ProductsResponse =
+  | { products: { edges: Array<Edge<ProductNode>>; pageInfo: PageInfo } }
+  | { edges: Array<Edge<ProductNode>>; pageInfo: PageInfo };
 
 type Fitment = {
   id: string;
@@ -31,391 +35,488 @@ type Fitment = {
   chassis: string | null;
 };
 
-type FitmentsBatchResponse = {
-  items: Array<{ productGid: string; fitments: Fitment[] }>;
+type FitmentsResponse = { items: Fitment[] };
+
+type CreateFitmentPayload = {
+  productGid: string;
+  make: string;
+  model: string;
+  yearFrom?: number | null;
+  yearTo?: number | null;
+  trim?: string | null;
+  chassis?: string | null;
 };
 
-// ---------- Page ----------
-export default function FitmentsAssignPage() {
-  // query/paging
-  const [q, setQ] = useState('');
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [onlyUnassigned, setOnlyUnassigned] = useState(false);
+type DeleteFitmentPayload = { id: string };
 
-  // data
-  const [products, setProducts] = useState<ProductNode[]>([]);
-  const [hasNext, setHasNext] = useState(false);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [fitmentsByProduct, setFitmentsByProduct] = useState<Record<string, Fitment[]>>({});
-
-// add near other state:
-const [errText, setErrText] = useState<string | null>(null);
-
-const fetchProducts = useCallback(
-  async (append: boolean) => {
-    setLoading(true);
-    setErrText(null);
-    try {
-      // ---- Try GET first
-      const getUrl = new URL('/api/admin/products', window.location.origin);
-      if (q.trim()) getUrl.searchParams.set('q', q.trim());
-      if (cursor) getUrl.searchParams.set('after', cursor);
-      getUrl.searchParams.set('first', '20');
-
-      let res = await fetch(getUrl.toString(), { cache: 'no-store' });
-
-      // ---- If GET failed (404/405/etc), try POST fallback
-      if (!res.ok) {
-        const postBody = { q: q.trim(), first: 20, after: cursor };
-        res = await fetch('/api/admin/products', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(postBody),
-        });
-      }
-
-      if (!res.ok) {
-        const t = await res.text();
-        throw new Error(`Products API ${res.status}: ${t.slice(0, 300)}`);
-      }
-
-      const json = (await res.json()) as ProductsResponse;
-
-      // Accept a couple shapes people commonly return
-      const edges = json.products?.edges
-        ?? (json as any).edges
-        ?? [];
-
-      const pageInfo = json.products?.pageInfo
-        ?? (json as any).pageInfo
-        ?? { hasNextPage: false, endCursor: null };
-
-      const nodes = edges.map((e: { node: ProductNode }) => e.node);
-      setProducts(prev => (append ? [...prev, ...nodes] : nodes));
-      setHasNext(Boolean(pageInfo.hasNextPage));
-      setNextCursor(pageInfo.endCursor ?? null);
-
-      // Batch-load fitments for visible nodes
-      if (nodes.length) {
-        const batch = await fetch('/api/admin/fitments/by-products', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ productGids: nodes.map(n => n.id) }),
-        });
-
-        if (batch.ok) {
-          const data = (await batch.json()) as {
-            items: Array<{ productGid: string; fitments: Fitment[] }>;
-          };
-          const merged: Record<string, Fitment[]> = {};
-          for (const item of data.items) merged[item.productGid] = item.fitments;
-          setFitmentsByProduct(prev => ({ ...prev, ...merged }));
-        } else {
-          // non-fatal
-          console.warn('fitments/by-products failed', await batch.text());
-        }
-      }
-    } catch (err) {
-      console.error('fetchProducts error', err);
-      setErrText(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  },
-  [q, cursor]
-);
-
-  useEffect(() => {
-    fetchProducts(false);
-  }, [fetchProducts]);
-
-  const filteredProducts = useMemo(() => {
-    if (!onlyUnassigned) return products;
-    return products.filter(p => (fitmentsByProduct[p.id] ?? []).length === 0);
-  }, [onlyUnassigned, products, fitmentsByProduct]);
-
-  const onSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setCursor(null);
-    await fetchProducts(false);
-  };
-
-  const refreshFitments = useCallback(async (productGid: string) => {
-    const res = await fetch(`/api/fitments?productGid=${encodeURIComponent(productGid)}`, {
-      cache: 'no-store',
-    });
-    if (!res.ok) return;
-    const rows = (await res.json()) as Fitment[];
-    setFitmentsByProduct(prev => ({ ...prev, [productGid]: rows }));
-  }, []);
-
-  return (
-    <div className="mx-auto max-w-7xl">
-      <h1 className="text-2xl font-bold text-gray-900">Products + Fitments View</h1>
-      <p className="mt-1 text-gray-700">
-        Assign Year / Make / Model (and optional Trim / Chassis) inline, or filter for unassigned products.
-      </p>
-
-      {/* Controls */}
-      <form onSubmit={onSearch} className="mt-4 flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-gray-900">
-          <input
-            type="checkbox"
-            className="h-4 w-4"
-            checked={onlyUnassigned}
-            onChange={e => setOnlyUnassigned(e.target.checked)}
-          />
-          Show only unassigned
-        </label>
-        <input
-          className="w-full max-w-md rounded border px-3 py-2 text-gray-900 placeholder-gray-500"
-          placeholder="Search title / handle / slug…"
-          value={q}
-          onChange={e => setQ(e.target.value)}
-        />
-        <button
-          type="submit"
-          className="rounded bg-gray-800 px-4 py-2 text-white hover:bg-black"
-        >
-          Refresh
-        </button>
-      </form>
-
-      {/* Table */}
-      <div className="mt-5 overflow-hidden rounded-xl border bg-white">
-        <div className="grid grid-cols-12 border-b bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900">
-          <div className="col-span-5">Product</div>
-          <div className="col-span-3">Current Fitments</div>
-          <div className="col-span-1">Status</div>
-          <div className="col-span-1">Admin</div>
-          <div className="col-span-2">Assign Fitment</div>
-        </div>
-
-        {filteredProducts.map(p => (
-          <Row
-            key={p.id}
-            product={p}
-            fitments={fitmentsByProduct[p.id] ?? []}
-            onDeleted={() => refreshFitments(p.id)}
-            onAdded={() => refreshFitments(p.id)}
-          />
-        ))}
-
-        {filteredProducts.length === 0 && (
-          <div className="px-6 py-10 text-center text-gray-700">No products.</div>
-        )}
-      </div>
-
-      <div className="mt-6">
-        {hasNext ? (
-          <button
-            onClick={async () => {
-              if (!hasNext || !nextCursor) return;
-              setCursor(nextCursor);
-              await fetchProducts(true);
-            }}
-            disabled={loading}
-            className="rounded border px-4 py-2 text-gray-900 hover:bg-gray-50 disabled:opacity-50"
-          >
-            {loading ? 'Loading…' : 'Load more'}
-          </button>
-        ) : (
-          <div className="text-gray-600">No more products.</div>
-        )}
-      </div>
-    </div>
-  );
+// ---------- Helpers ----------
+function isProductNode(v: unknown): v is ProductNode {
+  return typeof v === 'object' && v !== null && 'id' in v && 'handle' in v && 'title' in v;
 }
 
-// ---------- Row ----------
-function Row({
-  product,
-  fitments,
-  onAdded,
-  onDeleted,
-}: {
-  product: ProductNode;
-  fitments: Fitment[];
-  onAdded: () => Promise<void> | void;
-  onDeleted: () => Promise<void> | void;
-}) {
-  // add form
-  const [make, setMake] = useState('');
-  const [model, setModel] = useState('');
-  const [yearFrom, setYearFrom] = useState('');
-  const [yearTo, setYearTo] = useState('');
-  const [trim, setTrim] = useState('');
-  const [chassis, setChassis] = useState('');
-  const canAdd = make.trim() !== '' && model.trim() !== '';
+function isEdgeArray(v: unknown): v is Array<{ node: unknown; cursor?: unknown }> {
+  return Array.isArray(v) && v.every(e => typeof e === 'object' && e !== null && 'node' in e);
+}
 
-  // helpers
-  const img = product.featuredImage?.url || '//cdn.shopify.com/s/images/admin/no-image-256x256.gif';
-  const status = (product.status ?? 'ACTIVE').toUpperCase();
+function asPageInfo(v: unknown): PageInfo {
+  const hasNextPage =
+    typeof (v as { hasNextPage?: unknown })?.hasNextPage === 'boolean'
+      ? (v as { hasNextPage: boolean }).hasNextPage
+      : false;
 
-  async function addFitment(e: React.FormEvent) {
-    e.preventDefault();
-    if (!canAdd) return;
+  const endCursorRaw = (v as { endCursor?: unknown })?.endCursor;
+  const endCursor =
+    typeof endCursorRaw === 'string' || endCursorRaw === null || endCursorRaw === undefined
+      ? (endCursorRaw ?? null)
+      : null;
 
-    const yf = yearFrom.trim() ? Number(yearFrom) : null;
-    const yt = yearTo.trim() ? Number(yearTo) : null;
+  return { hasNextPage, endCursor };
+}
+
+/** Accepts different shapes from our products API and normalizes to nodes + pageInfo */
+function parseProductsResponse(json: unknown): { nodes: ProductNode[]; pageInfo: PageInfo } {
+  const products = (json as { products?: unknown })?.products;
+  if (products && typeof products === 'object') {
+    const edges = (products as { edges?: unknown }).edges;
+    if (isEdgeArray(edges)) {
+      const nodes = edges.map(e => e.node).filter(isProductNode);
+      return { nodes, pageInfo: asPageInfo((products as { pageInfo?: unknown }).pageInfo) };
+    }
+    const nodesArr = (products as { nodes?: unknown }).nodes;
+    if (Array.isArray(nodesArr)) {
+      const nodes = (nodesArr as unknown[]).filter(isProductNode);
+      return { nodes, pageInfo: asPageInfo((products as { pageInfo?: unknown }).pageInfo) };
+    }
+  }
+
+  const edgesB = (json as { edges?: unknown }).edges;
+  if (isEdgeArray(edgesB)) {
+    const nodes = edgesB.map(e => e.node).filter(isProductNode);
+    return { nodes, pageInfo: asPageInfo((json as { pageInfo?: unknown }).pageInfo) };
+  }
+
+  return { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+}
+
+function emptyToNull(s?: string | null): string | null {
+  if (s === undefined || s === null) return null;
+  const t = s.trim();
+  return t.length ? t : null;
+}
+
+function toIntOrNull(s?: string): number | null {
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function statusBadgeColor(status: ProductStatus): string {
+  switch (status) {
+    case 'ACTIVE':
+      return 'bg-green-100 text-green-700';
+    case 'DRAFT':
+      return 'bg-yellow-100 text-yellow-800';
+    case 'ARCHIVED':
+      return 'bg-gray-200 text-gray-700';
+    default:
+      return 'bg-gray-200 text-gray-700';
+  }
+}
+
+// ---------- Page ----------
+export default function FitmentsDashboardPage() {
+  // UI state
+  const [search, setSearch] = useState('');
+  const [onlyUnassigned, setOnlyUnassigned] = useState(false);
+  const [products, setProducts] = useState<ProductNode[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [errorText, setErrorText] = useState<string | null>(null);
+
+  // pagination
+  const [hasNext, setHasNext] = useState(false);
+  const [endCursor, setEndCursor] = useState<string | null>(null);
+
+  // per-product fitments + form state
+  const [fitmentsByProduct, setFitmentsByProduct] = useState<Record<string, Fitment[]>>({});
+  const [formByProduct, setFormByProduct] = useState<Record<
+    string,
+    { make: string; model: string; yearFrom: string; yearTo: string; trim: string; chassis: string }
+  >>({});
+
+  // initial per-product form defaults
+  const ensureForm = useCallback((pid: string) => {
+    setFormByProduct(prev => {
+      if (prev[pid]) return prev;
+      return { ...prev, [pid]: { make: '', model: '', yearFrom: '', yearTo: '', trim: '', chassis: '' } };
+    });
+  }, []);
+
+  // Fetch products (paged)
+  const fetchProducts = useCallback(
+    async (opts: { append: boolean } = { append: false }) => {
+      try {
+        setErrorText(null);
+        opts.append ? setLoadingMore(true) : setLoading(true);
+
+        const params = new URLSearchParams();
+        params.set('first', '25');
+        if (opts.append && endCursor) params.set('after', endCursor);
+        if (search.trim()) params.set('query', search.trim());
+
+        const res = await fetch(`/api/admin/products?${params.toString()}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const json: unknown = await res.json();
+        const { nodes, pageInfo } = parseProductsResponse(json);
+
+        setProducts(prev => (opts.append ? [...prev, ...nodes] : nodes));
+        setHasNext(pageInfo.hasNextPage);
+        setEndCursor(pageInfo.endCursor);
+
+        // kick off fitment fetch for newly loaded nodes
+        for (const p of nodes) {
+          void fetchFitmentsFor(p.id);
+          ensureForm(p.id);
+        }
+      } catch (err) {
+        setErrorText((err as Error).message || 'Failed to load products');
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    },
+    [endCursor, search, ensureForm]
+  );
+
+  // Fetch fitments for a product
+  const fetchFitmentsFor = useCallback(async (productGid: string) => {
+    try {
+      const url = `/api/fitments?productGid=${encodeURIComponent(productGid)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Fitments HTTP ${res.status}`);
+      const data = (await res.json()) as FitmentsResponse;
+      setFitmentsByProduct(prev => ({ ...prev, [productGid]: data.items }));
+    } catch (err) {
+      // keep row usable even if fitments fail
+      setFitmentsByProduct(prev => ({ ...prev, [productGid]: [] }));
+    }
+  }, []);
+
+  // first load
+  useEffect(() => {
+    void fetchProducts({ append: false });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // handlers
+  const onRefresh = () => {
+    setEndCursor(null);
+    void fetchProducts({ append: false });
+  };
+
+  const onLoadMore = () => void fetchProducts({ append: true });
+
+  const onFieldChange = (pid: string, field: keyof (typeof formByProduct)[string], value: string) => {
+    setFormByProduct(prev => ({ ...prev, [pid]: { ...prev[pid], [field]: value } }));
+  };
+
+  const assignFitment = async (pid: string) => {
+    const f = formByProduct[pid];
+    if (!f) return;
+
+    const payload: CreateFitmentPayload = {
+      productGid: pid,
+      make: f.make.trim(),
+      model: f.model.trim(),
+      yearFrom: toIntOrNull(f.yearFrom) ?? undefined,
+      yearTo: toIntOrNull(f.yearTo) ?? undefined,
+      trim: emptyToNull(f.trim) ?? undefined,
+      chassis: emptyToNull(f.chassis) ?? undefined,
+    };
+
+    if (!payload.make || !payload.model) {
+      alert('Make and Model are required');
+      return;
+    }
 
     const res = await fetch('/api/admin/fitments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        productGid: product.id,
-        make: make.trim(),
-        model: model.trim(),
-        yearFrom: Number.isFinite(yf as number) ? (yf as number) : null,
-        yearTo: Number.isFinite(yt as number) ? (yt as number) : null,
-        trim: trim.trim() ? trim.trim() : null,
-        chassis: chassis.trim() ? chassis.trim() : null,
-      }),
+      body: JSON.stringify(payload),
     });
-
     if (!res.ok) {
-      alert(`Add fitment failed: ${await res.text()}`);
+      const msg = await res.text();
+      alert(`Assign failed: ${msg}`);
       return;
     }
 
-    // reset + refresh
-    setMake('');
-    setModel('');
-    setYearFrom('');
-    setYearTo('');
-    setTrim('');
-    setChassis('');
-    await onAdded();
-  }
+    // clear line + refresh list
+    setFormByProduct(prev => ({
+      ...prev,
+      [pid]: { make: '', model: '', yearFrom: '', yearTo: '', trim: '', chassis: '' },
+    }));
+    await fetchFitmentsFor(pid);
+  };
 
-  async function removeFitment(id: string) {
+  const deleteFitment = async (pid: string, id: string) => {
+    if (!confirm('Remove this fitment?')) return;
     const res = await fetch('/api/admin/fitments', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id }),
+      body: JSON.stringify({ id } satisfies DeleteFitmentPayload),
     });
     if (!res.ok) {
-      alert(`Delete fitment failed: ${await res.text()}`);
+      const msg = await res.text();
+      alert(`Delete failed: ${msg}`);
       return;
     }
-    await onDeleted();
-  }
+    await fetchFitmentsFor(pid);
+  };
 
+  // computed: filtered rows if "only unassigned"
+  const rows = useMemo(() => {
+    if (!onlyUnassigned) return products;
+    return products.filter(p => {
+      const f = fitmentsByProduct[p.id];
+      return !f || f.length === 0;
+    });
+  }, [onlyUnassigned, products, fitmentsByProduct]);
+
+  // ---------- UI ----------
   return (
-    <div className="grid grid-cols-12 items-start border-b px-4 py-4 text-sm last:border-b-0">
-      {/* Product */}
-      <div className="col-span-5 flex gap-3">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={img} alt={product.title} className="h-14 w-14 rounded border object-cover" />
-        <div className="min-w-0">
-          <div className="truncate font-semibold text-gray-900">{product.title}</div>
-          <div className="truncate text-gray-600">@{product.handle}</div>
-        </div>
-      </div>
+    <main className="p-6">
+      <h1 className="text-2xl font-bold text-gray-900">Products + Fitments</h1>
+      <p className="text-gray-600 mt-1">
+        Assign Year/Make/Model (and optional Trim/Chassis) to products. Use the search to narrow the list.
+      </p>
 
-      {/* Current Fitments */}
-      <div className="col-span-3">
-        {fitments.length === 0 ? (
-          <span className="rounded border px-2 py-1 text-gray-600">None</span>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {fitments.map(f => (
-              <span
-                key={f.id}
-                className="inline-flex items-center gap-2 rounded-full border px-2 py-1 text-gray-800"
-                title={`Trim: ${f.trim ?? '-'} | Chassis: ${f.chassis ?? '-'}`}
-              >
-                {f.make} {f.model}
-                {f.yearFrom ? ` ${f.yearFrom}` : ''}{f.yearTo ? `–${f.yearTo}` : ''}
-                <button
-                  onClick={() => removeFitment(f.id)}
-                  className="ml-1 rounded px-1 text-red-600 hover:bg-red-50"
-                  aria-label="Delete fitment"
-                  title="Delete fitment"
-                >
-                  ×
-                </button>
-              </span>
-            ))}
+      <section className="mt-5 rounded-xl border border-gray-200 bg-white shadow-sm">
+        {/* Toolbar */}
+        <div className="flex flex-wrap gap-3 items-center p-4 border-b border-gray-200">
+          <label className="inline-flex items-center gap-2 text-gray-800">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={onlyUnassigned}
+              onChange={(e) => setOnlyUnassigned(e.target.checked)}
+            />
+            Show only unassigned
+          </label>
+
+          <div className="flex items-center gap-2 ml-auto w-full sm:w-auto">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search title / handle…"
+              className="w-72 max-w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none"
+            />
+            <button
+              onClick={onRefresh}
+              className="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+              disabled={loading}
+            >
+              {loading ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
+        </div>
+
+        {/* Error */}
+        {errorText && (
+          <div className="px-4 py-3 text-sm text-red-700 bg-red-50 border-b border-red-200">
+            {errorText}
           </div>
         )}
-      </div>
 
-      {/* Status */}
-      <div className="col-span-1">
-        <span
-          className={`rounded px-2 py-1 ${
-            status === 'ACTIVE'
-              ? 'border border-green-200 bg-green-50 text-green-800'
-              : 'border border-gray-200 bg-gray-50 text-gray-700'
-          }`}
-        >
-          {status}
-        </span>
-      </div>
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-gray-700">
+              <tr>
+                <th className="px-4 py-3 text-left font-semibold">Product</th>
+                <th className="px-4 py-3 text-left font-semibold">Status</th>
+                <th className="px-4 py-3 text-left font-semibold">Current Fitments</th>
+                <th className="px-4 py-3 text-left font-semibold w-[520px]">Add Fitment</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {rows.map((p) => {
+                const fitments = fitmentsByProduct[p.id] ?? [];
+                const form = formByProduct[p.id] ?? {
+                  make: '',
+                  model: '',
+                  yearFrom: '',
+                  yearTo: '',
+                  trim: '',
+                  chassis: '',
+                };
 
-      {/* Admin */}
-      <div className="col-span-1">
-        <Link
-          href={`/products/${product.handle}`}
-          target="_blank"
-          className="text-indigo-700 hover:underline"
-        >
-          Open
-        </Link>
-      </div>
+                return (
+                  <tr key={p.id} className="align-top">
+                    {/* Product */}
+                    <td className="px-4 py-4">
+                      <div className="flex gap-3">
+                        <div className="h-16 w-16 rounded-md overflow-hidden bg-gray-100 border border-gray-200 relative">
+                          {p.featuredImage?.url ? (
+                            <Image
+                              src={p.featuredImage.url}
+                              alt={p.title}
+                              fill
+                              className="object-cover"
+                              sizes="64px"
+                              priority={false}
+                            />
+                          ) : (
+                            <div className="h-full w-full grid place-items-center text-xs text-gray-400">No image</div>
+                          )}
+                        </div>
+                        <div>
+                          <div className="font-medium text-gray-900">{p.title}</div>
+                          <div className="text-xs text-gray-500">@{p.handle}</div>
+                          <div className="mt-1">
+                            <a
+                              className="text-blue-600 hover:underline text-xs"
+                              href={`https://admin.shopify.com/store/${process.env.NEXT_PUBLIC_SHOP || ''}/products/${encodeURIComponent(
+                                p.id
+                              )}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open in Admin
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+                    </td>
 
-      {/* Assign Fitment */}
-      <div className="col-span-2">
-        <form onSubmit={addFitment} className="grid grid-cols-2 gap-2">
-          <input
-            className="col-span-2 rounded border px-2 py-1"
-            placeholder="Make"
-            value={make}
-            onChange={e => setMake(e.target.value)}
-          />
-          <input
-            className="col-span-2 rounded border px-2 py-1"
-            placeholder="Model"
-            value={model}
-            onChange={e => setModel(e.target.value)}
-          />
-          <input
-            className="rounded border px-2 py-1"
-            placeholder="Year from"
-            inputMode="numeric"
-            value={yearFrom}
-            onChange={e => setYearFrom(e.target.value)}
-          />
-          <input
-            className="rounded border px-2 py-1"
-            placeholder="Year to"
-            inputMode="numeric"
-            value={yearTo}
-            onChange={e => setYearTo(e.target.value)}
-          />
-          <input
-            className="col-span-2 rounded border px-2 py-1"
-            placeholder="Trim (optional)"
-            value={trim}
-            onChange={e => setTrim(e.target.value)}
-          />
-          <input
-            className="col-span-2 rounded border px-2 py-1"
-            placeholder="Chassis (optional)"
-            value={chassis}
-            onChange={e => setChassis(e.target.value)}
-          />
-          <button
-            type="submit"
-            disabled={!canAdd}
-            className="col-span-2 rounded bg-green-600 px-3 py-2 font-medium text-white hover:bg-green-700 disabled:opacity-50"
-          >
-            Assign Fitment
-          </button>
-        </form>
-      </div>
-    </div>
+                    {/* Status */}
+                    <td className="px-4 py-4">
+                      <span
+                        className={`inline-block rounded-md px-2 py-1 text-xs font-medium ${statusBadgeColor(
+                          p.status
+                        )}`}
+                      >
+                        {p.status}
+                      </span>
+                    </td>
+
+                    {/* Current Fitments */}
+                    <td className="px-4 py-4">
+                      {fitments.length === 0 ? (
+                        <span className="text-gray-500">None</span>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {fitments.map((f) => (
+                            <span
+                              key={f.id}
+                              className="inline-flex items-center gap-1 rounded-full border border-gray-300 bg-gray-50 px-2 py-1 text-xs text-gray-700"
+                              title={[
+                                f.make,
+                                f.model,
+                                f.yearFrom ? ` ${f.yearFrom}` : '',
+                                f.yearTo ? `–${f.yearTo}` : '',
+                                f.trim ? ` • ${f.trim}` : '',
+                                f.chassis ? ` • ${f.chassis}` : '',
+                              ].join('')}
+                            >
+                              {f.make} {f.model}
+                              {f.yearFrom ? ` ${f.yearFrom}` : ''}
+                              {f.yearTo ? `–${f.yearTo}` : ''}
+                              <button
+                                onClick={() => deleteFitment(p.id, f.id)}
+                                className="ml-1 rounded bg-white/60 px-1 text-gray-600 hover:text-red-700"
+                                aria-label="Remove fitment"
+                                title="Remove"
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+
+                    {/* Add Fitment */}
+                    <td className="px-4 py-4">
+                      <div className="grid grid-cols-6 gap-2">
+                        <input
+                          className="col-span-2 rounded-md border border-gray-300 px-2 py-1 text-gray-900"
+                          placeholder="Make (req)"
+                          value={form.make}
+                          onChange={(e) => onFieldChange(p.id, 'make', e.target.value)}
+                        />
+                        <input
+                          className="col-span-2 rounded-md border border-gray-300 px-2 py-1 text-gray-900"
+                          placeholder="Model (req)"
+                          value={form.model}
+                          onChange={(e) => onFieldChange(p.id, 'model', e.target.value)}
+                        />
+                        <input
+                          className="col-span-1 rounded-md border border-gray-300 px-2 py-1 text-gray-900"
+                          placeholder="Year from"
+                          value={form.yearFrom}
+                          onChange={(e) => onFieldChange(p.id, 'yearFrom', e.target.value)}
+                        />
+                        <input
+                          className="col-span-1 rounded-md border border-gray-300 px-2 py-1 text-gray-900"
+                          placeholder="Year to"
+                          value={form.yearTo}
+                          onChange={(e) => onFieldChange(p.id, 'yearTo', e.target.value)}
+                        />
+                        <input
+                          className="col-span-2 rounded-md border border-gray-300 px-2 py-1 text-gray-900"
+                          placeholder="Trim (optional)"
+                          value={form.trim}
+                          onChange={(e) => onFieldChange(p.id, 'trim', e.target.value)}
+                        />
+                        <input
+                          className="col-span-2 rounded-md border border-gray-300 px-2 py-1 text-gray-900"
+                          placeholder="Chassis (optional)"
+                          value={form.chassis}
+                          onChange={(e) => onFieldChange(p.id, 'chassis', e.target.value)}
+                        />
+                        <div className="col-span-6">
+                          <button
+                            onClick={() => assignFitment(p.id)}
+                            className="rounded-md bg-emerald-600 px-3 py-2 text-white hover:bg-emerald-700"
+                          >
+                            Add Fitment
+                          </button>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {rows.length === 0 && !loading && (
+                <tr>
+                  <td className="px-4 py-10 text-center text-gray-500" colSpan={4}>
+                    {onlyUnassigned ? 'No unassigned products found.' : 'No products found.'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Footer / pagination */}
+        <div className="flex items-center justify-between p-4 border-t border-gray-200">
+          <div className="text-sm text-gray-600">
+            Showing {rows.length} of {products.length} loaded.
+          </div>
+          <div className="flex items-center gap-2">
+            {hasNext && (
+              <button
+                onClick={onLoadMore}
+                className="rounded-md bg-gray-100 px-3 py-2 text-gray-800 hover:bg-gray-200"
+                disabled={loadingMore}
+              >
+                {loadingMore ? 'Loading…' : 'Load more'}
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+    </main>
   );
 }
