@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
+import React from 'react';  // at top of file
+
 type FitTermType = 'MAKE' | 'MODEL' | 'TRIM' | 'CHASSIS';
 
 type FitTerm = {
