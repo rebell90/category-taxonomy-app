@@ -1,8 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-
-import React from 'react';  // at top of file
+import React, { useEffect, useMemo, useState } from 'react';
 
 type FitTermType = 'MAKE' | 'MODEL' | 'TRIM' | 'CHASSIS';
 
@@ -43,7 +41,7 @@ export default function FitTermsPage() {
   // MAKE -> none
   const validParents = useMemo(() => {
     if (type === 'MODEL') return makes;
-    if (type === 'TRIM')  return models;
+    if (type === 'TRIM') return models;
     if (type === 'CHASSIS') return [...makes, ...models];
     return [];
   }, [type, makes, models]);
@@ -53,9 +51,10 @@ export default function FitTermsPage() {
     setErr(null);
     try {
       const res = await fetch('/api/fit-terms', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as TreeResponse;
-      setTree(json.tree);
-      setFlat(json.rows);
+      setTree(Array.isArray(json.tree) ? json.tree : []);
+      setFlat(Array.isArray(json.rows) ? json.rows : []);
     } catch {
       setErr('Failed to load fit terms');
     } finally {
@@ -149,7 +148,7 @@ export default function FitTermsPage() {
     setParentId(term.parentId);
   }
 
-  function renderTree(nodes: FitTerm[], depth = 0): JSX.Element | null {
+  function renderTree(nodes: FitTerm[], depth = 0): React.ReactNode {
     if (!nodes.length) return null;
     return (
       <ul className="ml-0 pl-0 space-y-1">
