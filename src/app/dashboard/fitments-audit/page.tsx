@@ -137,33 +137,59 @@ export default function FitmentsAuditPage() {
     }
   }
 
-  async function loadProducts(append = false) {
-    setLoading(true);
-    setErrorMsg(null);
-    try {
-      const qs = new URLSearchParams();
-      qs.set('first', '50');
-      if (append && nextCursor) qs.set('after', nextCursor);
-      if (q.trim()) qs.set('q', q.trim());
+async function loadProducts(append = false) {
+  setLoading(true);
+  setErrorMsg(null);
+  try {
+    const qs = new URLSearchParams();
+    qs.set('first', '50');
 
-      const res = await fetch(`/api/admin/products-audit?${qs.toString()}`, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`Products HTTP ${res.status}`);
+    if (append && nextCursor) qs.set('after', nextCursor);
+    if (q.trim()) qs.set('q', q.trim());
 
-      const json = (await res.json()) as ProductsResponse;
-      const edges = json.products?.edges ?? [];
-      const pageInfo = json.products?.pageInfo ?? { hasNextPage: false, endCursor: null };
+    // IMPORTANT: use the SAME endpoint your working audit page uses.
+    // If your working page calls `/api/admin/products` (not products-audit),
+    // change the line below to match it EXACTLY.
+    const productsEndpoint = '/api/admin/products-audit';
 
-      const nodes = edges.map(e => e.node);
-      setProducts(prev => (append ? [...prev, ...nodes] : nodes));
-      setHasNext(Boolean(pageInfo.hasNextPage));
-      setNextCursor(pageInfo.endCursor ?? null);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setErrorMsg(msg);
-    } finally {
-      setLoading(false);
+    const url = `${productsEndpoint}?${qs.toString()}`;
+    const res = await fetch(url, { cache: 'no-store' });
+
+    if (!res.ok) {
+      const text = await res.text();
+      console.error('Products fetch failed', res.status, text);
+      throw new Error(`Products HTTP ${res.status}`);
     }
+
+    const json = await res.json();
+    console.log('[fitments-audit] products response:', json);
+
+    // Accept several shapes:
+    // 1) { products: { edges, pageInfo } }
+    // 2) { edges, pageInfo }
+    // 3) { items, pageInfo }
+    const edges =
+      json?.products?.edges ??
+      json?.edges ??
+      (Array.isArray(json?.items) ? json.items.map((n: any) => ({ node: n })) : []);
+
+    const pageInfo =
+      json?.products?.pageInfo ??
+      json?.pageInfo ??
+      { hasNextPage: false, endCursor: null };
+
+    const nodes = edges.map((e: { node: ProductNode }) => e.node);
+
+    setProducts(prev => (append ? [...prev, ...nodes] : nodes));
+    setHasNext(Boolean(pageInfo.hasNextPage));
+    setNextCursor(pageInfo.endCursor ?? null);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    setErrorMsg(msg);
+  } finally {
+    setLoading(false);
   }
+}
 
   async function loadFitmentsForProduct(productGid: string) {
     try {
