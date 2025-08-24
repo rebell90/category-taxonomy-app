@@ -58,13 +58,23 @@ async function ensureFitTerm(type: FitTermType, name: string, parentId?: string 
 
 async function tryWriteMetafield(productGid: string) {
   try {
-    const mod = await import('@/lib/product-metafields').catch(() => null);
-    const fn = mod?.writeProductFitmentsMetafield as
-      | ((gid: string) => Promise<void>)
-      | undefined;
-    if (fn) await fn(productGid);
+    const mod = await import('@/lib/product-metafields');
+
+    // Type-safe picking of whichever function exists
+    const maybeA: unknown = (mod as Record<string, unknown>)['writeProductFitmentsMetafield'];
+    const maybeB: unknown = (mod as Record<string, unknown>)['rebuildProductFitmentMetafield'];
+
+    const writer =
+      (typeof maybeA === 'function' ? (maybeA as (gid: string) => Promise<void>) : undefined) ??
+      (typeof maybeB === 'function' ? (maybeB as (gid: string) => Promise<void>) : undefined);
+
+    if (writer) {
+      await writer(productGid);
+    } else {
+      // No-op if neither function exists; keep silent
+    }
   } catch {
-    // ignore
+    // Swallow to avoid breaking API responses if the writer isn’t present
   }
 }
 
@@ -98,89 +108,77 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as CreateBody;
+  try {
+    const body = (await req.json()) as {
+      productGid: string;
+      makeId: string;
+      modelId: string;
+      trimId?: string | null;
+      chassisId?: string | null;
+      yearFrom?: number | string | null;
+      yearTo?: number | string | null;
+    };
 
-  const productGid = 'productGid' in body ? body.productGid : undefined;
-  if (!productGid) {
-    return NextResponse.json({ error: 'Missing productGid' }, { status: 400 });
-  }
-
-  const yearFrom = toNumOrNull((body as { yearFrom?: number | null }).yearFrom);
-  const yearTo = toNumOrNull((body as { yearTo?: number | null }).yearTo);
-  const trim = (body as { trim?: string | null }).trim ?? null;
-  const chassis = (body as { chassis?: string | null }).chassis ?? null;
-
-  let makeName: string | null = null;
-  let modelName: string | null = null;
-
-  // Path A: IDs
-  if ('makeId' in body && 'modelId' in body) {
-    const makeTerm = await prisma.fitTerm.findUnique({
-      where: { id: body.makeId },
-      select: { id: true, name: true, type: true },
-    });
-    if (!makeTerm || makeTerm.type !== 'MAKE') {
-      return NextResponse.json({ error: 'Invalid makeId' }, { status: 400 });
-    }
-
-    const modelTerm = await prisma.fitTerm.findUnique({
-      where: { id: body.modelId },
-      select: { id: true, name: true, type: true, parentId: true },
-    });
-    if (!modelTerm || modelTerm.type !== 'MODEL') {
-      return NextResponse.json({ error: 'Invalid modelId' }, { status: 400 });
-    }
-
-    if (modelTerm.parentId && modelTerm.parentId !== makeTerm.id) {
-      return NextResponse.json({ error: 'modelId not a child of makeId' }, { status: 400 });
-    }
-
-    makeName = makeTerm.name;
-    modelName = modelTerm.name;
-  }
-
-  // Path B: Names
-  if (!makeName || !modelName) {
-    const { make, model } = body as CreateBodyNames;
-    if (!make || !model) {
-      return NextResponse.json(
-        { error: 'Missing make/model (or makeId/modelId)' },
-        { status: 400 }
-      );
-    }
-    const makeTerm = await ensureFitTerm('MAKE', make.trim(), null);
-    const modelTerm = await ensureFitTerm('MODEL', model.trim(), makeTerm.id);
-    makeName = makeTerm.name;
-    modelName = modelTerm.name;
-  }
-
-  const created = await prisma.productFitment.upsert({
-    where: {
-      productGid_make_model_yearFrom_yearTo_trim_chassis: {
-        productGid,
-        make: makeName!,
-        model: modelName!,
-        yearFrom,
-        yearTo,
-        trim,
-        chassis,
-      },
-    },
-    create: {
+    const {
       productGid,
-      make: makeName!,
-      model: modelName!,
+      makeId,
+      modelId,
+      trimId = null,
+      chassisId = null,
       yearFrom,
       yearTo,
-      trim,
-      chassis,
-    },
-    update: {},
-  });
+    } = body;
 
-  await tryWriteMetafield(productGid);
+    if (!productGid || !makeId || !modelId) {
+      return NextResponse.json({ error: 'Missing productGid, makeId, or modelId' }, { status: 400 });
+    }
 
-  return NextResponse.json(created);
+    // Coerce to numbers or null
+    const yf: number | null =
+      typeof yearFrom === 'number'
+        ? yearFrom
+        : typeof yearFrom === 'string' && yearFrom.trim()
+        ? Number(yearFrom)
+        : null;
+
+    const yt: number | null =
+      typeof yearTo === 'number'
+        ? yearTo
+        : typeof yearTo === 'string' && yearTo.trim()
+        ? Number(yearTo)
+        : null;
+
+    // Resolve names for the term ids you store (adjust if you store ids instead)
+    const [makeTerm, modelTerm, trimTerm, chassisTerm] = await Promise.all([
+      prisma.fitTerm.findUnique({ where: { id: makeId } }),
+      prisma.fitTerm.findUnique({ where: { id: modelId } }),
+      trimId ? prisma.fitTerm.findUnique({ where: { id: trimId } }) : Promise.resolve(null),
+      chassisId ? prisma.fitTerm.findUnique({ where: { id: chassisId } }) : Promise.resolve(null),
+    ]);
+
+    if (!makeTerm || !modelTerm) {
+      return NextResponse.json({ error: 'Invalid makeId or modelId' }, { status: 400 });
+    }
+
+    const created = await prisma.productFitment.create({
+      data: {
+        productGid,
+        make: makeTerm.name,
+        model: modelTerm.name,
+        ...(trimTerm ? { trim: trimTerm.name } : {}),
+        ...(chassisTerm ? { chassis: chassisTerm.name } : {}),
+        ...(yf !== null ? { yearFrom: yf } : {}),
+        ...(yt !== null ? { yearTo: yt } : {}),
+      },
+    });
+
+    // Optionally refresh metafield
+    await tryWriteMetafield(productGid);
+
+    return NextResponse.json(created);
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+  }
 }
 
 export async function DELETE(req: NextRequest) {
