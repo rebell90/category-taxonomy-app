@@ -1,30 +1,19 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
-
-/* =======================
-   Types
-   ======================= */
+import { useEffect, useMemo, useState } from 'react';
 
 type ProductItem = {
-  id: string;            // product GID e.g. gid://shopify/Product/123
+  id: string;           // gid://shopify/Product/...
   title: string;
   handle: string;
   image?: string | null;
   status?: string;
 };
 
-type ProductsResponse =
-  | {
-      items: ProductItem[];
-      nextCursor?: string | null;
-    }
-  // Allow a looser shape if your /api/admin/products returns edges
-  | {
-      products?: { edges: Array<{ node: ProductItem }>; pageInfo?: { hasNextPage: boolean; endCursor?: string | null } };
-      edges?: Array<{ node: ProductItem }>;
-      pageInfo?: { hasNextPage: boolean; endCursor?: string | null };
-    };
+type ProductsResp = {
+  items: ProductItem[];
+  nextCursor?: string | null;
+};
 
 type FitTermType = 'MAKE' | 'MODEL' | 'TRIM' | 'CHASSIS';
 
@@ -39,83 +28,60 @@ type FitTermsResp = {
   rows: FitTerm[];
 };
 
-type ProductFitment = {
+type Fitment = {
   id: string;
   productGid: string;
   make: string;
   model: string;
   yearFrom: number | null;
   yearTo: number | null;
-  trim: string | null;
-  chassis: string | null;
-  createdAt?: string;
-  updatedAt?: string;
-};
-
-type FitmentsListResp = { fitments: ProductFitment[] };
-
-type UpsertPayload = {
-  productGid: string;
-  make: string;
-  model: string;
-  yearFrom?: number | null;
-  yearTo?: number | null;
   trim?: string | null;
   chassis?: string | null;
 };
 
-type DeletePayload = {
-  productGid: string;
-  make: string;
-  model: string;
-  yearFrom?: number | null;
-  yearTo?: number | null;
-  trim?: string | null;
-  chassis?: string | null;
+type FitmentsResp = {
+  fitments?: Fitment[];   // our route
+  items?: Fitment[];      // tolerate alternate shape
 };
 
-/* =======================
-   Helpers
-   ======================= */
-
-function cls(...items: Array<string | false | null | undefined>) {
-  return items.filter(Boolean).join(' ');
+function classNames(...xs: Array<string | false | null | undefined>) {
+  return xs.filter(Boolean).join(' ');
 }
-
-function parseIntOrNull(v?: string): number | null {
-  if (!v) return null;
-  const n = parseInt(v, 10);
-  return Number.isFinite(n) ? n : null;
-}
-
-/* =======================
-   Row Editor state
-   ======================= */
-
-type RowEditorState = {
-  makeId: string;
-  modelId: string;
-  yearFrom: string; // keep as text input, convert later
-  yearTo: string;   // keep as text input, convert later
-  trimId: string;
-  chassisId: string;
-};
-
-/* =======================
-   Component
-   ======================= */
 
 export default function FitmentsAuditPage() {
-  // Products
+  // Products list
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [loadingProducts, setLoadingProducts] = useState(false);
+  const [prodErr, setProdErr] = useState<string | null>(null);
 
-  // Fit terms
+  // Fit terms (Make/Model tree)
   const [terms, setTerms] = useState<FitTerm[]>([]);
+  const [loadingTerms, setLoadingTerms] = useState(false);
+  const [termsErr, setTermsErr] = useState<string | null>(null);
+
+  // Expanded state per product row
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+
+  // Fitments per product
+  const [fitmentsByProduct, setFitmentsByProduct] = useState<Record<string, Fitment[]>>({});
+  const [loadingFitments, setLoadingFitments] = useState<Record<string, boolean>>({});
+  const [fitErrs, setFitErrs] = useState<Record<string, string | null>>({});
+
+  // Add-fitment form state per product
+  type NewFitForm = {
+    makeId: string;
+    modelId: string;
+    yearFrom: string;
+    yearTo: string;
+    trim: string;
+    chassis: string;
+  };
+  const [newFitForm, setNewFitForm] = useState<Record<string, NewFitForm>>({});
+
+  // Derived maps
   const makes = useMemo(() => terms.filter(t => t.type === 'MAKE'), [terms]);
-  const modelsByParent = useMemo<Record<string, FitTerm[]>>(() => {
+  const modelsByParent: Record<string, FitTerm[]> = useMemo(() => {
     const out: Record<string, FitTerm[]> = {};
     for (const t of terms) {
       if (t.type === 'MODEL' && t.parentId) {
@@ -125,478 +91,395 @@ export default function FitmentsAuditPage() {
     }
     return out;
   }, [terms]);
-  const trimsByParent = useMemo<Record<string, FitTerm[]>>(() => {
-    const out: Record<string, FitTerm[]> = {};
-    for (const t of terms) {
-      if (t.type === 'TRIM' && t.parentId) {
-        if (!out[t.parentId]) out[t.parentId] = [];
-        out[t.parentId].push(t);
-      }
-    }
-    return out;
-  }, [terms]);
-  const chassisByParent = useMemo<Record<string, FitTerm[]>>(() => {
-    const out: Record<string, FitTerm[]> = {};
-    for (const t of terms) {
-      if (t.type === 'CHASSIS' && t.parentId) {
-        if (!out[t.parentId]) out[t.parentId] = [];
-        out[t.parentId].push(t);
-      }
-    }
-    return out;
-  }, [terms]);
 
-  // Per-product fitments & editor state
-  const [fitmentsByProduct, setFitmentsByProduct] = useState<Record<string, ProductFitment[]>>({});
-  const [editor, setEditor] = useState<Record<string, RowEditorState>>({});
-
-  // Load products
-  async function loadProducts(cursor?: string | null, append = false) {
-    setLoading(true);
-    setErr(null);
+  // ---------- Loaders ----------
+  async function loadProducts(after?: string | null, append = false) {
+    setLoadingProducts(true);
+    setProdErr(null);
     try {
       const url = new URL('/api/admin/products', window.location.origin);
-      url.searchParams.set('limit', '25');
-      if (cursor) url.searchParams.set('cursor', cursor);
-
+      url.searchParams.set('first', '20');
+      if (after) url.searchParams.set('after', after);
       const res = await fetch(url.toString(), { cache: 'no-store' });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Products HTTP ${res.status}: ${text.slice(0, 200)}`);
-      }
-      const json: ProductsResponse = await res.json();
-
-      // Normalize shapes
-      let items: ProductItem[] = [];
-      let next: string | null = null;
-
-      if ('items' in json && Array.isArray(json.items)) {
-        items = json.items;
-        next = (json.nextCursor as string | null) ?? null;
-      } else {
-        const edges = json.products?.edges ?? json.edges ?? [];
-        items = edges.map(e => e.node);
-        next = json.products?.pageInfo?.endCursor ?? json.pageInfo?.endCursor ?? null;
-      }
-
-      setProducts(prev => (append ? [...prev, ...items] : items));
-      setNextCursor(next ?? null);
-
-      // Initialize editor & fetch fitments for new products
-      const newIds = items.map(p => p.id);
-      const nextEditor = { ...(append ? editor : {}) };
-      newIds.forEach(id => {
-        if (!nextEditor[id]) {
-          nextEditor[id] = {
-            makeId: '',
-            modelId: '',
-            yearFrom: '',
-            yearTo: '',
-            trimId: '',
-            chassisId: '',
-          };
-        }
-      });
-      setEditor(nextEditor);
-
-      // Load fitments for the new batch
-      await Promise.all(
-        newIds.map(async (gid) => {
-          const f = await fetchFitmentsFor(gid);
-          setFitmentsByProduct(prev => ({ ...prev, [gid]: f }));
-        })
-      );
+      if (!res.ok) throw new Error(`Products HTTP ${res.status}`);
+      const json = (await res.json()) as ProductsResp;
+      setProducts(p => (append ? [...p, ...json.items] : json.items));
+      setNextCursor(json.nextCursor ?? null);
     } catch (e) {
-      setErr((e as Error).message);
+      setProdErr((e as Error).message);
     } finally {
-      setLoading(false);
+      setLoadingProducts(false);
     }
   }
 
-  // Load terms
   async function loadTerms() {
+    setLoadingTerms(true);
+    setTermsErr(null);
     try {
       const res = await fetch('/api/fit-terms', { cache: 'no-store' });
-      const json = (await res.json()) as FitTermsResp | { rows?: FitTerm[] };
-      const rows = 'rows' in json && Array.isArray(json.rows) ? json.rows : [];
-      setTerms(rows);
-    } catch {
-      setErr('Failed to load fitment terms');
+      if (!res.ok) throw new Error(`Fit-terms HTTP ${res.status}`);
+      const json = (await res.json()) as FitTermsResp;
+      setTerms(json.rows || []);
+    } catch (e) {
+      setTermsErr((e as Error).message);
+    } finally {
+      setLoadingTerms(false);
     }
   }
 
-  // Initial load
+  async function loadFitments(productGid: string) {
+    setLoadingFitments(s => ({ ...s, [productGid]: true }));
+    setFitErrs(s => ({ ...s, [productGid]: null }));
+    try {
+      const url = new URL('/api/admin/fitments', window.location.origin);
+      // IMPORTANT: use full GID (e.g. "gid://shopify/Product/..."), not numeric ID
+      url.searchParams.set('productGid', productGid);
+      const res = await fetch(url.toString(), { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Fitments HTTP ${res.status}`);
+      const json = (await res.json()) as FitmentsResp;
+      const items = json.fitments ?? json.items ?? [];
+      setFitmentsByProduct(s => ({ ...s, [productGid]: items }));
+    } catch (e) {
+      setFitErrs(s => ({ ...s, [productGid]: (e as Error).message }));
+    } finally {
+      setLoadingFitments(s => ({ ...s, [productGid]: false }));
+    }
+  }
+
   useEffect(() => {
-    loadTerms();
     loadProducts(null, false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    loadTerms();
   }, []);
 
-  // Fetch a product’s fitments
-  async function fetchFitmentsFor(productGid: string): Promise<ProductFitment[]> {
-    const url = new URL('/api/admin/fitments', window.location.origin);
-    url.searchParams.set('productGid', productGid);
-    const res = await fetch(url.toString(), { cache: 'no-store' });
-    if (!res.ok) return [];
-    const json = (await res.json()) as FitmentsListResp | { fitments?: ProductFitment[] };
-    return json.fitments ?? [];
+  // ---------- Helpers ----------
+  function ensureForm(productGid: string): NewFitForm {
+    const cur = newFitForm[productGid];
+    if (cur) return cur;
+    const created: NewFitForm = {
+      makeId: '',
+      modelId: '',
+      yearFrom: '',
+      yearTo: '',
+      trim: '',
+      chassis: '',
+    };
+    setNewFitForm(s => ({ ...s, [productGid]: created }));
+    return created;
   }
 
-  // Editor field setters
-  function setEditorField(productGid: string, key: keyof RowEditorState, value: string) {
-    setEditor(prev => ({ ...prev, [productGid]: { ...prev[productGid], [key]: value } }));
+  function onToggle(product: ProductItem) {
+    setOpen(s => {
+      const now = !s[product.id];
+      const next = { ...s, [product.id]: now };
+      if (now && !fitmentsByProduct[product.id]) {
+        // lazy load fitments for this product
+        void loadFitments(product.id);
+      }
+      return next;
+    });
   }
 
-  function resetEditor(productGid: string) {
-    setEditor(prev => ({
-      ...prev,
-      [productGid]: { makeId: '', modelId: '', yearFrom: '', yearTo: '', trimId: '', chassisId: '' },
-    }));
+  function modelsForMake(makeId: string): FitTerm[] {
+    if (!makeId) return [];
+    return modelsByParent[makeId] || [];
   }
 
-  // Derived dropdown options for a row
-  function modelsFor(productGid: string): FitTerm[] {
-    const makeId = editor[productGid]?.makeId;
-    return makeId ? (modelsByParent[makeId] ?? []) : [];
-  }
-  function trimsFor(productGid: string): FitTerm[] {
-    const modelId = editor[productGid]?.modelId;
-    return modelId ? (trimsByParent[modelId] ?? []) : [];
-  }
-  function chassisFor(productGid: string): FitTerm[] {
-    // Chassis are allowed under Make or Model in your term manager;
-    // we’ll show those attached to either selection (prefer model first).
-    const modelId = editor[productGid]?.modelId;
-    const makeId = editor[productGid]?.makeId;
-    if (modelId && chassisByParent[modelId]) return chassisByParent[modelId];
-    if (makeId && chassisByParent[makeId]) return chassisByParent[makeId];
-    return [];
+  function findTermName(id: string | null | undefined): string {
+    if (!id) return '';
+    const t = terms.find(x => x.id === id);
+    return t?.name || '';
   }
 
-  // Actions
+  // ---------- Mutations ----------
   async function addFitment(product: ProductItem) {
-    setErr(null);
-    const row = editor[product.id];
-    if (!row?.makeId || !row?.modelId) {
-      setErr('Make and Model are required');
-      return;
-    }
-    const make = terms.find(t => t.id === row.makeId)?.name ?? '';
-    const model = terms.find(t => t.id === row.modelId)?.name ?? '';
-    if (!make || !model) {
-      setErr('Invalid make/model selection');
-      return;
-    }
+    const form = ensureForm(product.id);
+    // Validate
+    if (!form.makeId) return alert('Pick a Make');
+    if (!form.modelId) return alert('Pick a Model');
+    const yearFrom = form.yearFrom ? Number(form.yearFrom) : null;
+    const yearTo = form.yearTo ? Number(form.yearTo) : null;
 
-    const payload: UpsertPayload = {
-      productGid: product.id,
-      make,
-      model,
-      yearFrom: parseIntOrNull(row.yearFrom),
-      yearTo: parseIntOrNull(row.yearTo),
-      trim: row.trimId ? terms.find(t => t.id === row.trimId)?.name ?? null : null,
-      chassis: row.chassisId ? terms.find(t => t.id === row.chassisId)?.name ?? null : null,
-    };
-
-    const res = await fetch('/api/admin/fitments', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      const j = await res.json().catch(() => null);
-      setErr(j?.error || 'Add fitment failed');
-      return;
+    try {
+      const res = await fetch('/api/admin/fitments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // NOTE: This assumes your POST route takes strings for make/model (names).
+        // If your route wants term IDs instead, send makeId/modelId and adjust the server accordingly.
+        body: JSON.stringify({
+          productGid: product.id,                          // FULL GID
+          make: findTermName(form.makeId),                 // name from term
+          model: findTermName(form.modelId),               // name from term
+          yearFrom,
+          yearTo,
+          trim: form.trim.trim() || null,
+          chassis: form.chassis.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => null);
+        throw new Error(j?.error || `Add failed (${res.status})`);
+      }
+      // Refresh this product’s fitments
+      await loadFitments(product.id);
+      // Clear only this product’s form (keep make to speed workflow if you like)
+      setNewFitForm(s => ({
+        ...s,
+        [product.id]: {
+          ...s[product.id],
+          modelId: '',
+          yearFrom: '',
+          yearTo: '',
+          trim: '',
+          chassis: '',
+        },
+      }));
+    } catch (e) {
+      alert((e as Error).message);
     }
-
-    // Refresh product’s fitments & reset row
-    const fresh = await fetchFitmentsFor(product.id);
-    setFitmentsByProduct(prev => ({ ...prev, [product.id]: fresh }));
-    resetEditor(product.id);
   }
 
-  async function deleteFitment(product: ProductItem, f: ProductFitment) {
-    setErr(null);
-    const payload: DeletePayload = {
-      productGid: product.id,
-      make: f.make,
-      model: f.model,
-      yearFrom: f.yearFrom ?? undefined,
-      yearTo: f.yearTo ?? undefined,
-      trim: f.trim ?? undefined,
-      chassis: f.chassis ?? undefined,
-    };
-
-    const res = await fetch('/api/admin/fitments', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      const j = await res.json().catch(() => null);
-      setErr(j?.error || 'Delete fitment failed');
-      return;
+  async function deleteFitment(productGid: string, fitmentId: string) {
+    if (!confirm('Remove this fitment?')) return;
+    try {
+      const res = await fetch('/api/admin/fitments', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: fitmentId }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => null);
+        throw new Error(j?.error || `Delete failed (${res.status})`);
+      }
+      await loadFitments(productGid);
+    } catch (e) {
+      alert((e as Error).message);
     }
-
-    const fresh = await fetchFitmentsFor(product.id);
-    setFitmentsByProduct(prev => ({ ...prev, [product.id]: fresh }));
   }
 
-  /* =======================
-     Render
-     ======================= */
-
+  // ---------- Render ----------
   return (
     <main className="p-6">
-      <h1 className="text-2xl font-bold text-gray-900 mb-2">Products ⇄ Fitments</h1>
-      <p className="text-sm text-gray-800 mb-4">
-        Assign Year / Make / Model (plus optional Trim & Chassis) to your products.  
-        This writes the compiled fitment list to the product metafield (for storefront filtering).
+      <h1 className="text-2xl font-bold text-gray-900 mb-1">Products ⇄ Fitments</h1>
+      <p className="text-sm text-gray-700 mb-4">
+        Click a product to view and add fitments (Year range, Make, Model, optional Trim/Chassis).
       </p>
 
-      {err && (
-        <div className="mb-3 rounded-md border border-red-200 bg-red-50 text-red-800 px-3 py-2">
-          {err}
-        </div>
-      )}
+      {/* Errors */}
+      {prodErr && <div className="mb-3 text-red-700">Products error: {prodErr}</div>}
+      {termsErr && <div className="mb-3 text-red-700">Fit-terms error: {termsErr}</div>}
 
       <div className="bg-white border rounded-xl shadow-sm overflow-hidden">
-        <table className="w-full table-fixed">
+        <table className="min-w-full border-collapse">
           <thead className="bg-gray-50">
-            <tr className="text-left text-gray-900 text-sm">
-              <th className="p-3 w-[64px]">Image</th>
-              <th className="p-3">Title</th>
-              <th className="p-3 w-[160px]">Make</th>
-              <th className="p-3 w-[160px]">Model</th>
-              <th className="p-3 w-[120px]">Year From</th>
-              <th className="p-3 w-[120px]">Year To</th>
-              <th className="p-3 w-[160px]">Trim</th>
-              <th className="p-3 w-[160px]">Chassis</th>
-              <th className="p-3 w-[140px]">Actions</th>
+            <tr className="text-left text-gray-900">
+              <th className="px-3 py-2 border-b">Product</th>
+              <th className="px-3 py-2 border-b hidden md:table-cell">Handle</th>
+              <th className="px-3 py-2 border-b hidden md:table-cell">Status</th>
+              <th className="px-3 py-2 border-b w-24"></th>
             </tr>
           </thead>
           <tbody>
-            {products.length === 0 && !loading && (
-              <tr>
-                <td colSpan={9} className="p-6 text-center text-gray-700">
-                  No products found.
-                </td>
-              </tr>
-            )}
-
-            {products.map(p => {
-              const row = editor[p.id] ?? {
-                makeId: '',
-                modelId: '',
-                yearFrom: '',
-                yearTo: '',
-                trimId: '',
-                chassisId: '',
-              };
-              const models = modelsFor(p.id);
-              const trims = trimsFor(p.id);
-              const chassis = chassisFor(p.id);
-              const current = fitmentsByProduct[p.id] ?? [];
+            {products.map((p) => {
+              const isOpen = open[p.id] || false;
+              const form = ensureForm(p.id);
+              const fitLoad = Boolean(loadingFitments[p.id]);
+              const fitErr = fitErrs[p.id] || null;
+              const fitments = fitmentsByProduct[p.id] || [];
 
               return (
-                <tr key={p.id} className="border-t align-top">
-                  <td className="p-3">
-                    {p.image ? (
-                      // Keeping <img> per your preference to avoid Next/Image LCP tradeoffs now
-                      <img
-                        src={p.image}
-                        alt={p.title}
-                        className="w-12 h-12 object-cover rounded-md border"
-                      />
-                    ) : (
-                      <div className="w-12 h-12 bg-gray-100 border rounded-md" />
-                    )}
-                  </td>
+                <tr key={p.id} className="align-top">
+                  <td className="px-3 py-3 border-b">
+                    <div className="flex items-center gap-3">
+                      {/* thumb */}
+                      <div className="w-14 h-14 rounded overflow-hidden border bg-gray-100 shrink-0">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={p.image || '//cdn.shopify.com/s/images/admin/no-image-256x256.gif'}
+                          alt={p.title}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div>
+                        <div className="font-medium text-gray-900">{p.title}</div>
+                        <div className="text-xs text-gray-600">{p.id}</div>
+                      </div>
+                    </div>
 
-                  <td className="p-3">
-                    <div className="text-gray-900 font-medium">{p.title}</div>
-                    <div className="text-xs text-gray-700">{p.handle}</div>
-                    {current.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {current.map(f => (
-                          <span
-                            key={`${f.make}-${f.model}-${f.yearFrom ?? ''}-${f.yearTo ?? ''}-${f.trim ?? ''}-${f.chassis ?? ''}`}
-                            className="inline-flex items-center gap-2 rounded-full border bg-gray-50 px-2.5 py-1 text-xs text-gray-800"
-                          >
-                            {[
-                              f.make,
-                              f.model,
-                              f.yearFrom ? `${f.yearFrom}` : null,
-                              f.yearTo ? `${f.yearTo}` : null,
-                              f.trim ? `Trim:${f.trim}` : null,
-                              f.chassis ? `Chassis:${f.chassis}` : null,
-                            ]
-                              .filter(Boolean)
-                              .join(' • ')}
-                            <button
-                              className="text-red-700 hover:underline ml-1"
-                              onClick={() => deleteFitment(p, f)}
-                              title="Remove fitment"
+                    {/* expanded panel */}
+                    {isOpen && (
+                      <div className="mt-3 rounded-lg border bg-gray-50">
+                        <div className="p-3">
+                          <div className="font-semibold text-gray-900 mb-2">Fitments</div>
+
+                          {fitErr && <div className="text-red-700 mb-2">{fitErr}</div>}
+                          {fitLoad ? (
+                            <div className="text-gray-700">Loading fitments…</div>
+                          ) : fitments.length === 0 ? (
+                            <div className="text-gray-700">None yet.</div>
+                          ) : (
+                            <ul className="space-y-1">
+                              {fitments.map(f => (
+                                <li
+                                  key={f.id}
+                                  className="flex items-center justify-between bg-white border rounded px-2 py-1"
+                                >
+                                  <div className="text-gray-900 text-sm">
+                                    <span className="font-medium">{f.make}</span> {f.model ? `• ${f.model}` : ''}
+                                    {f.yearFrom || f.yearTo ? (
+                                      <span className="text-gray-700"> • {f.yearFrom ?? ''}–{f.yearTo ?? ''}</span>
+                                    ) : null}
+                                    {f.trim ? <span className="text-gray-700"> • {f.trim}</span> : null}
+                                    {f.chassis ? <span className="text-gray-700"> • {f.chassis}</span> : null}
+                                  </div>
+                                  <button
+                                    className="text-red-700 text-xs underline"
+                                    onClick={() => deleteFitment(p.id, f.id)}
+                                  >
+                                    Remove
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+
+                        {/* add form */}
+                        <div className="p-3 border-t bg-white">
+                          <div className="font-semibold text-gray-900 mb-2">Add fitment</div>
+                          <div className="grid md:grid-cols-6 gap-2">
+                            {/* Make */}
+                            <select
+                              className="border rounded p-2 text-gray-900"
+                              value={form.makeId}
+                              onChange={(e) => {
+                                const makeId = e.target.value;
+                                setNewFitForm(s => ({
+                                  ...s,
+                                  [p.id]: { ...s[p.id], makeId, modelId: '' },
+                                }));
+                              }}
                             >
-                              remove
+                              <option value="">Make…</option>
+                              {makes.map(mk => (
+                                <option key={mk.id} value={mk.id}>{mk.name}</option>
+                              ))}
+                            </select>
+
+                            {/* Model (filtered by make) */}
+                            <select
+                              className="border rounded p-2 text-gray-900"
+                              value={form.modelId}
+                              onChange={(e) => {
+                                const modelId = e.target.value;
+                                setNewFitForm(s => ({ ...s, [p.id]: { ...s[p.id], modelId } }));
+                              }}
+                              disabled={!form.makeId}
+                            >
+                              <option value="">Model…</option>
+                              {modelsForMake(form.makeId).map(md => (
+                                <option key={md.id} value={md.id}>{md.name}</option>
+                              ))}
+                            </select>
+
+                            {/* Year From */}
+                            <input
+                              type="number"
+                              placeholder="Year from"
+                              className="border rounded p-2 text-gray-900"
+                              value={form.yearFrom}
+                              onChange={(e) =>
+                                setNewFitForm(s => ({ ...s, [p.id]: { ...s[p.id], yearFrom: e.target.value } }))
+                              }
+                            />
+
+                            {/* Year To */}
+                            <input
+                              type="number"
+                              placeholder="Year to"
+                              className="border rounded p-2 text-gray-900"
+                              value={form.yearTo}
+                              onChange={(e) =>
+                                setNewFitForm(s => ({ ...s, [p.id]: { ...s[p.id], yearTo: e.target.value } }))
+                              }
+                            />
+
+                            {/* Trim */}
+                            <input
+                              type="text"
+                              placeholder="Trim (optional)"
+                              className="border rounded p-2 text-gray-900"
+                              value={form.trim}
+                              onChange={(e) =>
+                                setNewFitForm(s => ({ ...s, [p.id]: { ...s[p.id], trim: e.target.value } }))
+                              }
+                            />
+
+                            {/* Chassis */}
+                            <input
+                              type="text"
+                              placeholder="Chassis (optional)"
+                              className="border rounded p-2 text-gray-900"
+                              value={form.chassis}
+                              onChange={(e) =>
+                                setNewFitForm(s => ({ ...s, [p.id]: { ...s[p.id], chassis: e.target.value } }))
+                              }
+                            />
+                          </div>
+
+                          <div className="mt-2">
+                            <button
+                              className="bg-blue-700 hover:bg-blue-800 text-white px-4 py-2 rounded"
+                              onClick={() => addFitment(p)}
+                            >
+                              Add fitment
                             </button>
-                          </span>
-                        ))}
+                          </div>
+                        </div>
                       </div>
                     )}
                   </td>
 
-                  {/* Make */}
-                  <td className="p-3">
-                    <select
-                      className="w-full border rounded-md p-2 text-gray-900"
-                      value={row.makeId}
-                      onChange={e => {
-                        const makeId = e.target.value;
-                        setEditorField(p.id, 'makeId', makeId);
-                        // reset downstream selections
-                        setEditorField(p.id, 'modelId', '');
-                        setEditorField(p.id, 'trimId', '');
-                        setEditorField(p.id, 'chassisId', '');
-                      }}
-                    >
-                      <option value="">—</option>
-                      {makes.map(m => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </select>
+                  <td className="px-3 py-3 border-b hidden md:table-cell text-gray-800">
+                    /products/{p.handle}
                   </td>
-
-                  {/* Model */}
-                  <td className="p-3">
-                    <select
-                      className="w-full border rounded-md p-2 text-gray-900"
-                      value={row.modelId}
-                      onChange={e => {
-                        const modelId = e.target.value;
-                        setEditorField(p.id, 'modelId', modelId);
-                        // reset downstream
-                        setEditorField(p.id, 'trimId', '');
-                        setEditorField(p.id, 'chassisId', '');
-                      }}
-                      disabled={!row.makeId}
-                    >
-                      <option value="">—</option>
-                      {models.map(m => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </select>
+                  <td className="px-3 py-3 border-b hidden md:table-cell text-gray-800">
+                    {p.status || '—'}
                   </td>
-
-                  {/* Year From */}
-                  <td className="p-3">
-                    <input
-                      className="w-full border rounded-md p-2 text-gray-900"
-                      placeholder="e.g. 2015"
-                      inputMode="numeric"
-                      value={row.yearFrom}
-                      onChange={e => setEditorField(p.id, 'yearFrom', e.target.value)}
-                    />
-                  </td>
-
-                  {/* Year To */}
-                  <td className="p-3">
-                    <input
-                      className="w-full border rounded-md p-2 text-gray-900"
-                      placeholder="e.g. 2020"
-                      inputMode="numeric"
-                      value={row.yearTo}
-                      onChange={e => setEditorField(p.id, 'yearTo', e.target.value)}
-                    />
-                  </td>
-
-                  {/* Trim */}
-                  <td className="p-3">
-                    <select
-                      className="w-full border rounded-md p-2 text-gray-900"
-                      value={row.trimId}
-                      onChange={e => setEditorField(p.id, 'trimId', e.target.value)}
-                      disabled={!row.modelId}
-                    >
-                      <option value="">—</option>
-                      {trims.map(t => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-
-                  {/* Chassis */}
-                  <td className="p-3">
-                    <select
-                      className="w-full border rounded-md p-2 text-gray-900"
-                      value={row.chassisId}
-                      onChange={e => setEditorField(p.id, 'chassisId', e.target.value)}
-                      disabled={!row.makeId && !row.modelId}
-                    >
-                      <option value="">—</option>
-                      {chassis.map(c => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-
-                  <td className="p-3">
+                  <td className="px-3 py-3 border-b">
                     <button
-                      className="bg-blue-700 hover:bg-blue-800 text-white px-3 py-2 rounded disabled:opacity-50"
-                      onClick={() => addFitment(p)}
-                      disabled={!editor[p.id]?.makeId || !editor[p.id]?.modelId}
-                      title="Add fitment"
+                      className="text-blue-700 underline"
+                      onClick={() => onToggle(p)}
                     >
-                      Add
+                      {open[p.id] ? 'Hide' : 'Manage'}
                     </button>
                   </td>
                 </tr>
               );
             })}
+
+            {(!loadingProducts && products.length === 0) && (
+              <tr>
+                <td className="px-3 py-8 text-center text-gray-700" colSpan={4}>
+                  No products found.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
-
-        <div className="border-t p-3 flex items-center justify-between">
-          <span className="text-sm text-gray-700">
-            Showing {products.length} product{products.length === 1 ? '' : 's'}
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              className="bg-gray-100 hover:bg-gray-200 text-gray-900 px-3 py-2 rounded"
-              onClick={() => loadProducts(null, false)}
-              disabled={loading}
-              title="Reload first page"
-            >
-              Reload
-            </button>
-            <button
-              className={cls(
-                'px-3 py-2 rounded',
-                nextCursor ? 'bg-blue-700 hover:bg-blue-800 text-white' : 'bg-gray-200 text-gray-500 cursor-not-allowed'
-              )}
-              onClick={() => nextCursor && loadProducts(nextCursor, true)}
-              disabled={!nextCursor || loading}
-              title="Load more"
-            >
-              Load more
-            </button>
-          </div>
-        </div>
       </div>
 
-      {loading && (
-        <div className="mt-3 text-gray-800">
-          Loading…
-        </div>
-      )}
+      <div className="mt-3">
+        <button
+          className={classNames(
+            'px-4 py-2 rounded border',
+            nextCursor ? 'bg-white text-gray-900 hover:bg-gray-50' : 'bg-gray-100 text-gray-500 cursor-not-allowed'
+          )}
+          disabled={!nextCursor || loadingProducts}
+          onClick={() => loadProducts(nextCursor, true)}
+        >
+          {loadingProducts ? 'Loading…' : 'Load more'}
+        </button>
+      </div>
     </main>
   );
 }
