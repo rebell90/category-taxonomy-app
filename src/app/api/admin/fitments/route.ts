@@ -1,6 +1,7 @@
 // src/app/api/admin/fitments/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { Prisma } from '@prisma/client';
 import { rebuildProductFitmentMetafield } from '@/lib/product-metafields'; // make sure this exists
 
 const CORS_HEADERS: Record<string, string> = {
@@ -85,7 +86,7 @@ export async function GET(req: NextRequest) {
     const yearParam = searchParams.get('year');
     const year = yearParam ? Number(yearParam) : undefined;
 
-    const where: Parameters<typeof prisma.productFitment.findMany>[0]['where'] = {};
+    const where: Prisma.ProductFitmentWhereInput = {};
 
     if (productGid) where.productGid = { equals: productGid };
     if (make) where.make = { equals: make };
