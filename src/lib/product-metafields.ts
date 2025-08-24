@@ -72,3 +72,4 @@ export async function rebuildProductFitmentMetafield(productGid: string) {
     throw new Error(`metafieldsSet userErrors: ${JSON.stringify(errs)}`);
   }
 }
+export const writeProductFitmentsMetafield = rebuildProductFitmentMetafield;
