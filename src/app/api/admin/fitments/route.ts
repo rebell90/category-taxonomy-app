@@ -1,233 +1,295 @@
-// src/app/api/admin/fitments/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { Prisma } from '@prisma/client';
-import { rebuildProductFitmentMetafield } from '@/lib/product-metafields'; // make sure this exists
 
-const CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Max-Age': '600',
-};
+// ---- Types you likely already have in Prisma ----
+// model FitTerm {
+//   id        String   @id @default(cuid())
+//   type      String   // 'MAKE' | 'MODEL' | 'TRIM' | 'CHASSIS'
+//   name      String
+//   parentId  String?
+//   createdAt DateTime @default(now())
+//   updatedAt DateTime @updatedAt
+//   @@index([type, name])
+// }
 
-export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
-}
+// model ProductFitment {
+//   id         String   @id @default(cuid())
+//   productGid String
+//   make       String
+//   model      String
+//   yearFrom   Int?
+//   yearTo     Int?
+//   trim       String?
+//   chassis    String?
+//   createdAt  DateTime @default(now())
+//   updatedAt  DateTime @updatedAt
+//   @@index([productGid])
+//   @@index([make, model])
+//   @@index([yearFrom, yearTo])
+//   @@unique([productGid, make, model, yearFrom, yearTo, trim, chassis])
+// }
 
-/* =========================
-   Types
-========================= */
+type FitTermType = 'MAKE' | 'MODEL' | 'TRIM' | 'CHASSIS';
 
-type FitmentItem = {
-  id: string;
-  productGid: string;
-  make: string;
-  model: string;
-  yearFrom: number | null;
-  yearTo: number | null;
-  trim: string | null;
-  chassis: string | null;
-};
+type CreateBody =
+  | {
+      // Using IDs route
+      productGid: string;
+      makeId: string;
+      modelId: string;
+      yearFrom?: number | null;
+      yearTo?: number | null;
+      trim?: string | null;
+      chassis?: string | null;
+    }
+  | {
+      // Using names route
+      productGid: string;
+      make: string;
+      model: string;
+      yearFrom?: number | null;
+      yearTo?: number | null;
+      trim?: string | null;
+      chassis?: string | null;
+    };
 
-type GetResponse = { items: FitmentItem[] };
-
-type PostBody = {
-  productGid: string;
-  // Term IDs (prefer these)
-  makeId: string;
-  modelId?: string | null;
-  trimId?: string | null;
-  chassisId?: string | null;
+type DeleteBody = {
+  id?: string; // ProductFitment id
+  productGid?: string;
+  make?: string;
+  model?: string;
   yearFrom?: number | null;
   yearTo?: number | null;
+  trim?: string | null;
+  chassis?: string | null;
 };
 
-type DeleteBody = { id: string };
-
-/* =========================
-   Helpers
-========================= */
-
-async function termNameOrThrow(id: string, expectedType: 'MAKE' | 'MODEL' | 'TRIM' | 'CHASSIS'): Promise<string> {
-  const t = await prisma.fitTerm.findUnique({
-    where: { id },
-    select: { id: true, type: true, name: true },
-  });
-  if (!t) throw new Error(`FitTerm not found: ${id}`);
-  if (t.type !== expectedType) throw new Error(`FitTerm ${id} type mismatch: expected ${expectedType}, got ${t.type}`);
-  return t.name;
-}
-
-function parseIntNullable(value: string | null): number | null {
-  if (!value) return null;
-  const n = Number(value);
+// Helper: safely coerce optional numeric strings to number|null
+function toNumOrNull(v: unknown): number | null {
+  if (v === undefined || v === null || v === '') return null;
+  const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
 
-/* =========================
-   GET /admin/fitments
-   Optional filters:
-   - productGid
-   - make
-   - model
-   - year
-   - trim
-   - chassis
-========================= */
-export async function GET(req: NextRequest) {
+// Helper: case-insensitive name match
+async function findFitTermByName(type: FitTermType, name: string, parentId?: string | null) {
+  const where = parentId
+    ? { type, name, parentId: parentId ?? undefined }
+    : { type, name };
+
+  return prisma.fitTerm.findFirst({
+    where,
+    select: { id: true, type: true, name: true, parentId: true },
+  });
+}
+
+async function ensureFitTerm(type: FitTermType, name: string, parentId?: string | null) {
+  const existing = await findFitTermByName(type, name, parentId ?? undefined);
+  if (existing) return existing;
+
+  // Create if missing
+  return prisma.fitTerm.create({
+    data: { type, name, parentId: parentId ?? undefined },
+    select: { id: true, type: true, name: true, parentId: true },
+  });
+}
+
+// Optional metafield writer: dynamically import if you have it
+async function tryWriteMetafield(productGid: string) {
   try {
-    const { searchParams } = new URL(req.url);
-    const productGid = searchParams.get('productGid') || undefined;
-    const make = searchParams.get('make') || undefined;
-    const model = searchParams.get('model') || undefined;
-    const trim = searchParams.get('trim') || undefined;
-    const chassis = searchParams.get('chassis') || undefined;
-    const yearParam = searchParams.get('year');
-    const year = yearParam ? Number(yearParam) : undefined;
-
-    const where: Prisma.ProductFitmentWhereInput = {};
-
-    if (productGid) where.productGid = { equals: productGid };
-    if (make) where.make = { equals: make };
-    if (model) where.model = { equals: model };
-    if (trim) where.trim = { equals: trim };
-    if (chassis) where.chassis = { equals: chassis };
-
-    if (typeof year === 'number' && Number.isFinite(year)) {
-      where.AND = [
-        { OR: [{ yearFrom: null }, { yearFrom: { lte: year } }] },
-        { OR: [{ yearTo: null }, { yearTo: { gte: year } }] },
-      ];
+    // You can export writeProductFitmentsMetafield(productGid: string)
+    // from '@/lib/product-metafields'
+    const mod = await import('@/lib/product-metafields').catch(() => null);
+    const fn = (mod && (mod as any).writeProductFitmentsMetafield) as
+      | ((gid: string) => Promise<void>)
+      | undefined;
+    if (fn) {
+      await fn(productGid);
     }
-
-    const rows = await prisma.productFitment.findMany({
-      where,
-      orderBy: [{ productGid: 'asc' }, { make: 'asc' }, { model: 'asc' }, { yearFrom: 'asc' }],
-      select: {
-        id: true,
-        productGid: true,
-        make: true,
-        model: true,
-        yearFrom: true,
-        yearTo: true,
-        trim: true,
-        chassis: true,
-      },
-    });
-
-    const items: FitmentItem[] = rows.map(r => ({
-      id: r.id,
-      productGid: r.productGid,
-      make: r.make,
-      model: r.model,
-      yearFrom: r.yearFrom,
-      yearTo: r.yearTo,
-      trim: r.trim,
-      chassis: r.chassis,
-    }));
-
-    return NextResponse.json<GetResponse>({ items }, { headers: CORS_HEADERS });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: msg }, { status: 500, headers: CORS_HEADERS });
+  } catch {
+    // ignore silently
   }
 }
 
-/* =========================
-   POST /admin/fitments
-   Body:
-   {
-     productGid: string,
-     makeId: string,
-     modelId?: string,
-     trimId?: string,
-     chassisId?: string,
-     yearFrom?: number|null,
-     yearTo?: number|null
-   }
-========================= */
+/** ------------------------------------
+ * GET /api/admin/fitments
+ * Optional query: productGid, make, model, year
+ * ------------------------------------ */
+export async function GET(req: NextRequest) {
+  const url = new URL(req.url);
+  const productGid = url.searchParams.get('productGid') || undefined;
+  const make = url.searchParams.get('make') || undefined;
+  const model = url.searchParams.get('model') || undefined;
+  const yearParam = url.searchParams.get('year');
+  const year = yearParam ? Number(yearParam) : undefined;
+
+  const where: NonNullable<Parameters<typeof prisma.productFitment.findMany>[0]>['where'] = {};
+
+  if (productGid) where.productGid = { equals: productGid };
+  if (make) where.make = { equals: make };
+  if (model) where.model = { equals: model };
+  if (typeof year === 'number' && Number.isFinite(year)) {
+    // Overlap logic: yearFrom <= year <= yearTo (null bounds allowed)
+    where.AND = [
+      { OR: [{ yearFrom: null }, { yearFrom: { lte: year } }] },
+      { OR: [{ yearTo: null }, { yearTo: { gte: year } }] },
+    ];
+  }
+
+  const fitments = await prisma.productFitment.findMany({
+    where,
+    orderBy: [{ make: 'asc' }, { model: 'asc' }, { yearFrom: 'asc' }],
+  });
+
+  return NextResponse.json({ fitments });
+}
+
+/** ------------------------------------
+ * POST /api/admin/fitments
+ * Accepts either:
+ *  - { productGid, makeId, modelId, ... }
+ *  - { productGid, make, model, ... }
+ * Creates missing FitTerms when using names.
+ * ------------------------------------ */
 export async function POST(req: NextRequest) {
-  try {
-    const body = (await req.json()) as PostBody;
+  const body = (await req.json()) as CreateBody;
 
-    const productGid = (body.productGid || '').trim();
-    if (!productGid) {
-      return NextResponse.json({ error: 'Missing productGid' }, { status: 400, headers: CORS_HEADERS });
+  const productGid = (body as any).productGid as string | undefined;
+  if (!productGid) {
+    return NextResponse.json({ error: 'Missing productGid' }, { status: 400 });
+  }
+
+  // Coerce numeric bounds
+  const yearFrom = toNumOrNull((body as any).yearFrom);
+  const yearTo = toNumOrNull((body as any).yearTo);
+  const trim = ((body as any).trim ?? null) as string | null;
+  const chassis = ((body as any).chassis ?? null) as string | null;
+
+  let makeName: string | null = null;
+  let modelName: string | null = null;
+
+  // Path A: IDs provided
+  if ('makeId' in body && 'modelId' in body && body.makeId && body.modelId) {
+    // Confirm they exist, retrieve names
+    const makeTerm = await prisma.fitTerm.findUnique({
+      where: { id: body.makeId },
+      select: { id: true, name: true, type: true },
+    });
+    if (!makeTerm || makeTerm.type !== 'MAKE') {
+      return NextResponse.json({ error: 'Invalid makeId' }, { status: 400 });
     }
-    if (!body.makeId) {
-      return NextResponse.json({ error: 'Missing makeId' }, { status: 400, headers: CORS_HEADERS });
+
+    const modelTerm = await prisma.fitTerm.findUnique({
+      where: { id: body.modelId },
+      select: { id: true, name: true, type: true, parentId: true },
+    });
+    if (!modelTerm || modelTerm.type !== 'MODEL') {
+      return NextResponse.json({ error: 'Invalid modelId' }, { status: 400 });
     }
 
-    const makeName = await termNameOrThrow(body.makeId, 'MAKE');
-    const modelName = body.modelId ? await termNameOrThrow(body.modelId, 'MODEL') : null;
-    const trimName = body.trimId ? await termNameOrThrow(body.trimId, 'TRIM') : null;
-    const chassisName = body.chassisId ? await termNameOrThrow(body.chassisId, 'CHASSIS') : null;
+    // (Optional) ensure model is under the make
+    if (modelTerm.parentId && modelTerm.parentId !== makeTerm.id) {
+      return NextResponse.json({ error: 'modelId is not a child of makeId' }, { status: 400 });
+    }
 
-    const yearFrom = typeof body.yearFrom === 'number' ? body.yearFrom : null;
-    const yearTo = typeof body.yearTo === 'number' ? body.yearTo : null;
+    makeName = makeTerm.name;
+    modelName = modelTerm.name;
+  }
 
-    // Create (unique on the combination per your schema)
-    const created = await prisma.productFitment.create({
-      data: {
+  // Path B: Names provided
+  if (!makeName || !modelName) {
+    const make = (body as any).make as string | undefined;
+    const model = (body as any).model as string | undefined;
+    if (!make || !model) {
+      return NextResponse.json({ error: 'Missing make/model (or makeId/modelId)' }, { status: 400 });
+    }
+
+    // ensure/lookup MAKE
+    const makeTerm = await ensureFitTerm('MAKE', make.trim(), null);
+    // ensure/lookup MODEL under that MAKE
+    const modelTerm = await ensureFitTerm('MODEL', model.trim(), makeTerm.id);
+
+    makeName = makeTerm.name;
+    modelName = modelTerm.name;
+  }
+
+  // Upsert ProductFitment (unique composite)
+  const created = await prisma.productFitment.upsert({
+    where: {
+      productGid_make_model_yearFrom_yearTo_trim_chassis: {
         productGid,
-        make: makeName,
-        model: modelName ?? '',
-        trim: trimName,
-        chassis: chassisName,
+        make: makeName!,
+        model: modelName!,
+        yearFrom: yearFrom ?? null,
+        yearTo: yearTo ?? null,
+        trim,
+        chassis,
+      },
+    },
+    create: {
+      productGid,
+      make: makeName!,
+      model: modelName!,
+      yearFrom,
+      yearTo,
+      trim,
+      chassis,
+    },
+    update: {},
+  });
+
+  // Write metafield (best-effort)
+  await tryWriteMetafield(productGid);
+
+  return NextResponse.json(created);
+}
+
+/** ------------------------------------
+ * DELETE /api/admin/fitments
+ * Accepts either:
+ *   - { id }  (ProductFitment id)
+ *   - { productGid, make, model, yearFrom?, yearTo?, trim?, chassis? } (composite)
+ * ------------------------------------ */
+export async function DELETE(req: NextRequest) {
+  const body = (await req.json()) as DeleteBody;
+
+  // Delete by id if provided
+  if (body.id) {
+    const deleted = await prisma.productFitment.delete({ where: { id: body.id } });
+    await tryWriteMetafield(deleted.productGid);
+    return NextResponse.json({ success: true });
+  }
+
+  // Otherwise require the composite keys
+  const productGid = body.productGid;
+  const make = body.make?.trim();
+  const model = body.model?.trim();
+  if (!productGid || !make || !model) {
+    return NextResponse.json(
+      { error: 'Missing productGid/make/model (or provide id)' },
+      { status: 400 }
+    );
+  }
+
+  const yearFrom = toNumOrNull(body.yearFrom ?? null);
+  const yearTo = toNumOrNull(body.yearTo ?? null);
+  const trim = (body.trim ?? null) as string | null;
+  const chassis = (body.chassis ?? null) as string | null;
+
+  const deleted = await prisma.productFitment.delete({
+    where: {
+      productGid_make_model_yearFrom_yearTo_trim_chassis: {
+        productGid,
+        make,
+        model,
         yearFrom,
         yearTo,
+        trim,
+        chassis,
       },
-      select: {
-        id: true,
-        productGid: true,
-        make: true,
-        model: true,
-        yearFrom: true,
-        yearTo: true,
-        trim: true,
-        chassis: true,
-      },
-    });
+    },
+  });
 
-    // Rebuild metafield for this product
-    await rebuildProductFitmentMetafield(productGid);
-
-    return NextResponse.json<FitmentItem>(created, { headers: CORS_HEADERS });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: msg }, { status: 500, headers: CORS_HEADERS });
-  }
-}
-
-/* =========================
-   DELETE /admin/fitments
-   Body: { id: string }
-========================= */
-export async function DELETE(req: NextRequest) {
-  try {
-    const body = (await req.json()) as DeleteBody;
-    const id = (body.id || '').trim();
-    if (!id) {
-      return NextResponse.json({ error: 'Missing id' }, { status: 400, headers: CORS_HEADERS });
-    }
-
-    // Get productGid first (so we can rebuild after delete)
-    const existing = await prisma.productFitment.findUnique({
-      where: { id },
-      select: { id: true, productGid: true },
-    });
-    if (!existing) {
-      return NextResponse.json({ error: 'Fitment not found' }, { status: 404, headers: CORS_HEADERS });
-    }
-
-    await prisma.productFitment.delete({ where: { id } });
-
-    await rebuildProductFitmentMetafield(existing.productGid);
-
-    return NextResponse.json({ success: true }, { headers: CORS_HEADERS });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: msg }, { status: 500, headers: CORS_HEADERS });
-  }
+  await tryWriteMetafield(productGid);
+  return NextResponse.json({ success: true });
 }
