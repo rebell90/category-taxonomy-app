@@ -25,6 +25,12 @@ export default function DashboardHome() {
           </p>
         </a>
 
+       <a href="/dashboard/fitments-audit" className="block border rounded-lg p-5 hover:shadow">
+          <div className="text-lg text-gray-600 font-semibold">Fitment + Products</div>
+          <p className="text-sm text-gray-600 mt-1">
+            Assign fitments to products.
+          </p>
+        </a>
         <a href="/dashboard/categories" className="block border rounded-lg p-5 hover:shadow">
           <div className="text-lg text-gray-600 font-semibold">Manage Category Tree</div>
           <p className="text-sm text-gray-600 mt-1">
