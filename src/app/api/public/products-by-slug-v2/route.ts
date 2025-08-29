@@ -36,18 +36,6 @@ type NodesResp = {
   >;
 };
 
-// Safe table existence check (works on Postgres)
-async function tableExists(table: string): Promise<boolean> {
-  try {
-    const rows = await prisma.$queryRaw<Array<{ exists: boolean }>>`
-      SELECT (to_regclass('public."${prisma.$unsafe(table)}"') IS NOT NULL) AS exists
-    `;
-    return Boolean(rows?.[0]?.exists);
-  } catch {
-    return false;
-  }
-}
-
 // Build WHERE for ProductFitment based on optional Y/M/M/Trim/Chassis + year
 function buildFitmentWhere(
   productGids: string[],
@@ -59,32 +47,28 @@ function buildFitmentWhere(
     chassisId?: string;
   }
 ) {
+  const { year, makeId, modelId, trimId, chassisId } = params;
+
   // No YMM supplied → null means "skip fitment filtering"
-  if (
-    !params.year &&
-    !params.makeId &&
-    !params.modelId &&
-    !params.trimId &&
-    !params.chassisId
-  ) {
+  if (!year && !makeId && !modelId && !trimId && !chassisId) {
     return null as const;
   }
 
-  const where: Parameters<typeof prisma.productFitment.findMany>[0]['where'] = {
-    productGid: { in: productGids },
-  };
+  const where: NonNullable<
+    Parameters<typeof prisma.productFitment.findMany>[0]
+  >['where'] = { productGid: { in: productGids } };
 
-  if (params.makeId) where.makeId = { equals: params.makeId };
-  if (params.modelId) where.modelId = { equals: params.modelId };
-  if (params.trimId) where.trimId = { equals: params.trimId };
-  if (params.chassisId) where.chassisId = { equals: params.chassisId };
+  if (makeId) where.makeId = { equals: makeId };
+  if (modelId) where.modelId = { equals: modelId };
+  if (trimId) where.trimId = { equals: trimId };
+  if (chassisId) where.chassisId = { equals: chassisId };
 
-  if (typeof params.year === 'number') {
-    const y = params.year;
-    // treat nulls as open range: (yearFrom IS NULL OR yearFrom <= y) AND (yearTo IS NULL OR y <= yearTo)
+  if (typeof year === 'number') {
+    // treat nulls as open range:
+    // (yearFrom IS NULL OR yearFrom <= y) AND (yearTo IS NULL OR y <= yearTo)
     where.AND = [
-      { OR: [{ yearFrom: null }, { yearFrom: { lte: y } }] },
-      { OR: [{ yearTo: null }, { yearTo: { gte: y } }] },
+      { OR: [{ yearFrom: null }, { yearFrom: { lte: year } }] },
+      { OR: [{ yearTo: null }, { yearTo: { gte: year } }] },
     ];
   }
 
@@ -130,20 +114,24 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ products: [] }, { headers: corsHeaders });
     }
 
-    let productGids = links.map(l => l.productGid);
+    let productGids = links.map((l) => l.productGid);
 
-    // 3) Intersect with fitments (if any YMM provided)
-    const hasFit = await tableExists('ProductFitment');
-    if (hasFit) {
+    // 3) Intersect with fitments (if any YMM provided).
+    // We *don't* hard check table existence—just try/catch the query.
+    if (year || makeId || modelId || trimId || chassisId) {
       const fitWhere = buildFitmentWhere(productGids, { year, makeId, modelId, trimId, chassisId });
       if (fitWhere) {
-        const fits = await prisma.productFitment.findMany({
-          where: fitWhere,
-          select: { productGid: true },
-          take: limit * 5,
-        });
-        const allowed = new Set(fits.map(f => f.productGid));
-        productGids = productGids.filter(id => allowed.has(id));
+        try {
+          const fits = await prisma.productFitment.findMany({
+            where: fitWhere,
+            select: { productGid: true },
+            take: limit * 5,
+          });
+          const allowed = new Set(fits.map((f) => f.productGid));
+          productGids = productGids.filter((id) => allowed.has(id));
+        } catch {
+          // If the table doesn't exist (or any other fitment error), we just skip YMM filtering.
+        }
       }
     }
 
@@ -171,23 +159,21 @@ export async function GET(req: NextRequest) {
 
     const data = await shopifyAdminGraphQL<NodesResp>(GQL, { ids: productGids });
 
-    const products: ProductLite[] =
-      (data.nodes || [])
-        .filter((n): n is NonNullable<NodesResp['nodes'][number]> => !!n)
-        .map(n => {
-          const imgSrc = n.images?.edges?.[0]?.node?.src || null;
-          const price =
-            n.priceRangeV2
-              ? `${n.priceRangeV2.minVariantPrice.amount} ${n.priceRangeV2.minVariantPrice.currencyCode}`
-              : null;
-          return {
-            id: n.id,
-            handle: n.handle,
-            title: n.title,
-            image: { src: imgSrc },
-            price,
-          };
-        });
+    const products: ProductLite[] = (data.nodes || [])
+      .filter((n): n is NonNullable<NodesResp['nodes'][number]> => !!n)
+      .map((n) => {
+        const imgSrc = n.images?.edges?.[0]?.node?.src || null;
+        const price = n.priceRangeV2
+          ? `${n.priceRangeV2.minVariantPrice.amount} ${n.priceRangeV2.minVariantPrice.currencyCode}`
+          : null;
+        return {
+          id: n.id,
+          handle: n.handle,
+          title: n.title,
+          image: { src: imgSrc },
+          price,
+        };
+      });
 
     return NextResponse.json({ products }, { headers: corsHeaders });
   } catch (e) {
