@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { shopifyAdminGraphQL } from '@/lib/shopify';
+import type { Prisma } from '@prisma/client';
 
 const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -46,7 +47,7 @@ function buildFitmentWhere(
     trimId?: string;
     chassisId?: string;
   }
-): Parameters<typeof prisma.productFitment.findMany>[0]['where'] | null {
+): Prisma.ProductFitmentWhereInput | null {
   const { year, makeId, modelId, trimId, chassisId } = params;
 
   // No YMM supplied → null means "skip fitment filtering"
@@ -54,9 +55,7 @@ function buildFitmentWhere(
     return null;
   }
 
-  const where: NonNullable<
-    Parameters<typeof prisma.productFitment.findMany>[0]
-  >['where'] = { productGid: { in: productGids } };
+  const where: Prisma.ProductFitmentWhereInput = { productGid: { in: productGids } };
 
   if (makeId) where.makeId = { equals: makeId };
   if (modelId) where.modelId = { equals: modelId };
@@ -104,7 +103,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ products: [] }, { headers: corsHeaders });
     }
 
-    // 2) All product GIDs linked to THIS category
+    // 2) Product GIDs linked to THIS category
     const links = await prisma.productCategory.findMany({
       where: { categoryId: cat.id },
       select: { productGid: true },
