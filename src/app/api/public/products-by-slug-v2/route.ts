@@ -46,12 +46,12 @@ function buildFitmentWhere(
     trimId?: string;
     chassisId?: string;
   }
-) {
+): Parameters<typeof prisma.productFitment.findMany>[0]['where'] | null {
   const { year, makeId, modelId, trimId, chassisId } = params;
 
   // No YMM supplied → null means "skip fitment filtering"
   if (!year && !makeId && !modelId && !trimId && !chassisId) {
-    return null as const;
+    return null;
   }
 
   const where: NonNullable<
@@ -116,8 +116,7 @@ export async function GET(req: NextRequest) {
 
     let productGids = links.map((l) => l.productGid);
 
-    // 3) Intersect with fitments (if any YMM provided).
-    // We *don't* hard check table existence—just try/catch the query.
+    // 3) Intersect with fitments (if any YMM provided). Try/catch in case table doesn't exist.
     if (year || makeId || modelId || trimId || chassisId) {
       const fitWhere = buildFitmentWhere(productGids, { year, makeId, modelId, trimId, chassisId });
       if (fitWhere) {
@@ -130,7 +129,7 @@ export async function GET(req: NextRequest) {
           const allowed = new Set(fits.map((f) => f.productGid));
           productGids = productGids.filter((id) => allowed.has(id));
         } catch {
-          // If the table doesn't exist (or any other fitment error), we just skip YMM filtering.
+          // If ProductFitment table/columns are missing, just skip YMM filtering.
         }
       }
     }
