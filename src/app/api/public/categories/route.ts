@@ -51,11 +51,12 @@ function buildTree(rows: CategoryRow[], parentId: string | null): CategoryNode[]
 }
 
 /** Apply YMM → create a Prisma where for ProductFitment (or null = no YMM) */
+// keep signature the same
 function buildFitmentWhere(
   productGids: string[],
   params: {
     year?: number;
-    makeId?: string;
+    makeId?: string;   // we’ll map these to string columns below
     modelId?: string;
     trimId?: string;
     chassisId?: string;
@@ -63,19 +64,20 @@ function buildFitmentWhere(
 ): Prisma.ProductFitmentWhereInput | null {
   const { year, makeId, modelId, trimId, chassisId } = params;
 
-  // If nothing is set, skip fitment filtering
+  // If no fitment provided, skip filtering
   if (!year && !makeId && !modelId && !trimId && !chassisId) return null;
 
-  const where: Prisma.ProductFitmentWhereInput = { productGid: { in: productGids } };
+  const where: Prisma.ProductFitmentWhereInput = {
+    productGid: { in: productGids },
+  };
 
-  // These keys must match your current ProductFitment schema
-  if (makeId) where.makeId = { equals: makeId };
-  if (modelId) where.modelId = { equals: modelId };
-  if (trimId) where.trimId = { equals: trimId };
-  if (chassisId) where.chassisId = { equals: chassisId };
+  // Your schema uses string columns: make/model/trim/chassis
+  if (makeId)   where.make   = { equals: makeId };
+  if (modelId)  where.model  = { equals: modelId };
+  if (trimId)   where.trim   = { equals: trimId };
+  if (chassisId) where.chassis = { equals: chassisId };
 
   if (typeof year === 'number') {
-    // open range: (yearFrom IS NULL OR yearFrom <= y) AND (yearTo IS NULL OR y <= yearTo)
     where.AND = [
       { OR: [{ yearFrom: null }, { yearFrom: { lte: year } }] },
       { OR: [{ yearTo: null }, { yearTo: { gte: year } }] },
