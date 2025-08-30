@@ -37,34 +37,56 @@ type NodesResp = {
   >;
 };
 
-// Build WHERE for ProductFitment based on optional Y/M/M/Trim/Chassis + year
+/** Resolve FitTerm IDs -> names for make/model/trim/chassis */
+async function resolveFitNames(params: {
+  makeId?: string;
+  modelId?: string;
+  trimId?: string;
+  chassisId?: string;
+}): Promise<{ make?: string; model?: string; trim?: string; chassis?: string }> {
+  const ids = [params.makeId, params.modelId, params.trimId, params.chassisId].filter(
+    (v): v is string => Boolean(v)
+  );
+  if (ids.length === 0) return {};
+
+  const terms = await prisma.fitTerm.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true, type: true },
+  });
+
+  const out: { make?: string; model?: string; trim?: string; chassis?: string } = {};
+  for (const t of terms) {
+    if (t.id === params.makeId) out.make = t.name;
+    if (t.id === params.modelId) out.model = t.name;
+    if (t.id === params.trimId) out.trim = t.name;
+    if (t.id === params.chassisId) out.chassis = t.name;
+  }
+  return out;
+}
+
+/** Build WHERE for ProductFitment using names + year range */
 function buildFitmentWhere(
   productGids: string[],
-  params: {
-    year?: number;
-    makeId?: string;
-    modelId?: string;
-    trimId?: string;
-    chassisId?: string;
-  }
+  names: { make?: string; model?: string; trim?: string; chassis?: string },
+  year?: number
 ): Prisma.ProductFitmentWhereInput | null {
-  const { year, makeId, modelId, trimId, chassisId } = params;
+  const hasAny =
+    Boolean(names.make) ||
+    Boolean(names.model) ||
+    Boolean(names.trim) ||
+    Boolean(names.chassis) ||
+    typeof year === 'number';
 
-  // No YMM supplied → null means "skip fitment filtering"
-  if (!year && !makeId && !modelId && !trimId && !chassisId) {
-    return null;
-  }
+  if (!hasAny) return null;
 
   const where: Prisma.ProductFitmentWhereInput = { productGid: { in: productGids } };
 
-  if (makeId) where.makeId = { equals: makeId };
-  if (modelId) where.modelId = { equals: modelId };
-  if (trimId) where.trimId = { equals: trimId };
-  if (chassisId) where.chassisId = { equals: chassisId };
+  if (names.make) where.make = { equals: names.make };
+  if (names.model) where.model = { equals: names.model };
+  if (names.trim) where.trim = { equals: names.trim };
+  if (names.chassis) where.chassis = { equals: names.chassis };
 
   if (typeof year === 'number') {
-    // treat nulls as open range:
-    // (yearFrom IS NULL OR yearFrom <= y) AND (yearTo IS NULL OR y <= yearTo)
     where.AND = [
       { OR: [{ yearFrom: null }, { yearFrom: { lte: year } }] },
       { OR: [{ yearTo: null }, { yearTo: { gte: year } }] },
@@ -86,7 +108,7 @@ export async function GET(req: NextRequest) {
     const limitParam = url.searchParams.get('limit');
     const limit = Math.max(1, Math.min(Number(limitParam || 24), 250));
 
-    // Optional YMM
+    // Optional YMM (IDs from your picker)
     const yearParam = url.searchParams.get('year');
     const year = yearParam ? Number(yearParam) : undefined;
     const makeId = url.searchParams.get('makeId') || undefined;
@@ -115,9 +137,11 @@ export async function GET(req: NextRequest) {
 
     let productGids = links.map((l) => l.productGid);
 
-    // 3) Intersect with fitments (if any YMM provided). Try/catch in case table doesn't exist.
+    // 3) Intersect with fitments (if any YMM provided)
     if (year || makeId || modelId || trimId || chassisId) {
-      const fitWhere = buildFitmentWhere(productGids, { year, makeId, modelId, trimId, chassisId });
+      // translate ids -> names (since ProductFitment stores names)
+      const names = await resolveFitNames({ makeId, modelId, trimId, chassisId });
+      const fitWhere = buildFitmentWhere(productGids, names, year);
       if (fitWhere) {
         try {
           const fits = await prisma.productFitment.findMany({
@@ -128,7 +152,7 @@ export async function GET(req: NextRequest) {
           const allowed = new Set(fits.map((f) => f.productGid));
           productGids = productGids.filter((id) => allowed.has(id));
         } catch {
-          // If ProductFitment table/columns are missing, just skip YMM filtering.
+          // If ProductFitment table/columns are missing, skip YMM filtering
         }
       }
     }
