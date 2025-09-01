@@ -30,66 +30,54 @@ type NodesResp = {
         id: string;
         handle: string;
         title: string;
-        images: { edges: Array<{ node: { src: string } }> };
+        images: { edges: Array<{ node: { url?: string; src?: string } }> };
         priceRangeV2?: { minVariantPrice: { amount: string; currencyCode: string } };
       }
     | null
   >;
 };
 
-/** Resolve FitTerm IDs -> names for make/model/trim/chassis */
-async function resolveFitNames(params: {
-  makeId?: string;
-  modelId?: string;
-  trimId?: string;
-  chassisId?: string;
-}): Promise<{ make?: string; model?: string; trim?: string; chassis?: string }> {
-  const ids = [params.makeId, params.modelId, params.trimId, params.chassisId].filter(
-    (v): v is string => Boolean(v)
-  );
-  if (ids.length === 0) return {};
-
-  const terms = await prisma.fitTerm.findMany({
-    where: { id: { in: ids } },
-    select: { id: true, name: true, type: true },
-  });
-
-  const out: { make?: string; model?: string; trim?: string; chassis?: string } = {};
-  for (const t of terms) {
-    if (t.id === params.makeId) out.make = t.name;
-    if (t.id === params.modelId) out.model = t.name;
-    if (t.id === params.trimId) out.trim = t.name;
-    if (t.id === params.chassisId) out.chassis = t.name;
+// Safe table existence on Postgres
+async function tableExists(tableName: string): Promise<boolean> {
+  try {
+    const rows = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = ${tableName}
+      ) AS "exists";
+    `;
+    return Boolean(rows?.[0]?.exists);
+  } catch {
+    return false;
   }
-  return out;
 }
 
-/** Build WHERE for ProductFitment using names + year range */
+// Build WHERE for ProductFitment using string fields (make/model/trim/chassis) and open year ranges
 function buildFitmentWhere(
   productGids: string[],
-  names: { make?: string; model?: string; trim?: string; chassis?: string },
-  year?: number
+  params: { year?: number; make?: string; model?: string; trim?: string; chassis?: string }
 ): Prisma.ProductFitmentWhereInput | null {
-  const hasAny =
-    Boolean(names.make) ||
-    Boolean(names.model) ||
-    Boolean(names.trim) ||
-    Boolean(names.chassis) ||
-    typeof year === 'number';
+  const { year, make, model, trim, chassis } = params;
 
-  if (!hasAny) return null;
+  if (!year && !make && !model && !trim && !chassis) return null;
 
-  const where: Prisma.ProductFitmentWhereInput = { productGid: { in: productGids } };
+  const where: Prisma.ProductFitmentWhereInput = {
+    productGid: { in: productGids },
+  };
 
-  if (names.make) where.make = { equals: names.make };
-  if (names.model) where.model = { equals: names.model };
-  if (names.trim) where.trim = { equals: names.trim };
-  if (names.chassis) where.chassis = { equals: names.chassis };
+  // Case-insensitive exact matches on strings
+  if (make)   where.make   = { equals: make.trim(), mode: 'insensitive' };
+  if (model)  where.model  = { equals: model.trim(), mode: 'insensitive' };
+  if (trim)   where.trim   = { equals: trim.trim(),  mode: 'insensitive' };
+  if (chassis)where.chassis= { equals: chassis.trim(), mode: 'insensitive' };
 
   if (typeof year === 'number') {
+    const y = year;
     where.AND = [
-      { OR: [{ yearFrom: null }, { yearFrom: { lte: year } }] },
-      { OR: [{ yearTo: null }, { yearTo: { gte: year } }] },
+      { OR: [{ yearFrom: null }, { yearFrom: { lte: y } }] },
+      { OR: [{ yearTo: null },   { yearTo:   { gte: y } }] },
     ];
   }
 
@@ -108,13 +96,13 @@ export async function GET(req: NextRequest) {
     const limitParam = url.searchParams.get('limit');
     const limit = Math.max(1, Math.min(Number(limitParam || 24), 250));
 
-    // Optional YMM (IDs from your picker)
+    // YMM as STRINGS (important: make/model are strings here)
     const yearParam = url.searchParams.get('year');
     const year = yearParam ? Number(yearParam) : undefined;
-    const makeId = url.searchParams.get('makeId') || undefined;
-    const modelId = url.searchParams.get('modelId') || undefined;
-    const trimId = url.searchParams.get('trimId') || undefined;
-    const chassisId = url.searchParams.get('chassisId') || undefined;
+    const make = url.searchParams.get('make') || undefined;
+    const model = url.searchParams.get('model') || undefined;
+    const trim = url.searchParams.get('trim') || undefined;
+    const chassis = url.searchParams.get('chassis') || undefined;
 
     // 1) Find category
     const cat = await prisma.category.findUnique({
@@ -125,35 +113,30 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ products: [] }, { headers: corsHeaders });
     }
 
-    // 2) Product GIDs linked to THIS category
+    // 2) Product links for this category
     const links = await prisma.productCategory.findMany({
       where: { categoryId: cat.id },
       select: { productGid: true },
-      take: limit * 5, // grab extra, YMM filter may cut down
+      take: limit * 5, // grab extra; fitment filter may shrink results
     });
     if (links.length === 0) {
       return NextResponse.json({ products: [] }, { headers: corsHeaders });
     }
 
-    let productGids = links.map((l) => l.productGid);
+    let productGids = links.map(l => l.productGid);
 
-    // 3) Intersect with fitments (if any YMM provided)
-    if (year || makeId || modelId || trimId || chassisId) {
-      // translate ids -> names (since ProductFitment stores names)
-      const names = await resolveFitNames({ makeId, modelId, trimId, chassisId });
-      const fitWhere = buildFitmentWhere(productGids, names, year);
+    // 3) Fitment intersection (only if any YMM provided AND table exists)
+    if (await tableExists('ProductFitment')) {
+      const fitWhere = buildFitmentWhere(productGids, { year, make, model, trim, chassis });
       if (fitWhere) {
-        try {
-          const fits = await prisma.productFitment.findMany({
-            where: fitWhere,
-            select: { productGid: true },
-            take: limit * 5,
-          });
-          const allowed = new Set(fits.map((f) => f.productGid));
-          productGids = productGids.filter((id) => allowed.has(id));
-        } catch {
-          // If ProductFitment table/columns are missing, skip YMM filtering
-        }
+        const fits = await prisma.productFitment.findMany({
+          where: fitWhere,
+          select: { productGid: true },
+          take: limit * 10,
+        });
+
+        const allowed = new Set(fits.map(f => f.productGid));
+        productGids = productGids.filter(id => allowed.has(id));
       }
     }
 
@@ -161,10 +144,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ products: [] }, { headers: corsHeaders });
     }
 
-    // Final slice
+    // Final slice for hydration
     productGids = productGids.slice(0, limit);
 
-    // 4) Hydrate via Admin GraphQL nodes(...)
+    // 4) Hydrate products via Admin GraphQL
     const GQL = `
       query Nodes($ids: [ID!]!) {
         nodes(ids: $ids) {
@@ -172,7 +155,7 @@ export async function GET(req: NextRequest) {
             id
             handle
             title
-            images(first: 1) { edges { node { src: url } } }
+            images(first: 1) { edges { node { url } } }
             priceRangeV2 { minVariantPrice { amount currencyCode } }
           }
         }
@@ -181,21 +164,26 @@ export async function GET(req: NextRequest) {
 
     const data = await shopifyAdminGraphQL<NodesResp>(GQL, { ids: productGids });
 
-    const products: ProductLite[] = (data.nodes || [])
-      .filter((n): n is NonNullable<NodesResp['nodes'][number]> => !!n)
-      .map((n) => {
-        const imgSrc = n.images?.edges?.[0]?.node?.src || null;
-        const price = n.priceRangeV2
-          ? `${n.priceRangeV2.minVariantPrice.amount} ${n.priceRangeV2.minVariantPrice.currencyCode}`
-          : null;
-        return {
-          id: n.id,
-          handle: n.handle,
-          title: n.title,
-          image: { src: imgSrc },
-          price,
-        };
-      });
+    const products: ProductLite[] =
+      (data.nodes || [])
+        .filter((n): n is NonNullable<NodesResp['nodes'][number]> => !!n)
+        .map(n => {
+          const img = n.images?.edges?.[0]?.node?.url ?? null;
+          const price = n.priceRangeV2
+            ? `${n.priceRangeV2.minVariantPrice.amount} ${n.priceRangeV2.minVariantPrice.currencyCode}`
+            : null;
+          return {
+            id: n.id,
+            handle: n.handle,
+            title: n.title,
+            image: { src: img },
+            price,
+          };
+        });
+
+    // Uncomment for quick debugging (then re-comment):
+    // console.log('[v2] params', { slug, year, make, model, trim, chassis, limit });
+    // console.log('[v2] productGids after filter', productGids.length);
 
     return NextResponse.json({ products }, { headers: corsHeaders });
   } catch (e) {
