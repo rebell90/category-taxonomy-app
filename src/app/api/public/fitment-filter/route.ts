@@ -16,11 +16,11 @@ export async function OPTIONS() {
 function buildWhere(
   productGids: string[],
   params: { year?: number; makeId?: string; modelId?: string; trimId?: string; chassisId?: string }
-): Prisma.ProductFitmentWhereInput | null {
+): prisma.ProductFitmentWhereInput | null {
   const { year, makeId, modelId, trimId, chassisId } = params;
   if (!year && !makeId && !modelId && !trimId && !chassisId) return null;
 
-  const where: Prisma.ProductFitmentWhereInput = { productGid: { in: productGids } };
+  const where: prisma.ProductFitmentWhereInput = { productGid: { in: productGids } };
 
   // NOTE: your schema uses relation fields (make/model/trim/chassis) not *_id
   if (makeId)   where.make   = { id: makeId };
