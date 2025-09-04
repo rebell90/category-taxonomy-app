@@ -1,6 +1,6 @@
 // Minimal public filter: given product handles and YMM ids/year, return which are allowed.
 import { NextRequest, NextResponse } from 'next/server';
-import prisma, { Prisma } from '@/lib/prisma';
+import prisma from '@/lib/prisma';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
