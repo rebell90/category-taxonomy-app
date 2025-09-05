@@ -1,9 +1,5 @@
-// src/app/api/public/fitment-filter/route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import type { Prisma } from '@prisma/client'; // <-- add this
-
-// ...
+// src/app/api/public/fitment-filter/route.ts (fragment)
+import type { Prisma } from '@prisma/client';
 
 function buildFitmentWhere(
   productGids: string[],
@@ -15,11 +11,11 @@ function buildFitmentWhere(
 
   const where: Prisma.ProductFitmentWhereInput = { productGid: { in: productGids } };
 
-  // RELATION filters (use `is: { id: ... }`)
-  if (makeId)    where.make    = { is: { id: makeId } };
-  if (modelId)   where.model   = { is: { id: modelId } };
-  if (trimId)    where.trim    = { is: { id: trimId } };
-  if (chassisId) where.chassis = { is: { id: chassisId } };
+  // Your table columns are strings named `make`, `model`, `trim`, `chassis`
+  if (makeId)    where.make    = { equals: makeId };
+  if (modelId)   where.model   = { equals: modelId };
+  if (trimId)    where.trim    = { equals: trimId };
+  if (chassisId) where.chassis = { equals: chassisId };
 
   if (typeof year === 'number' && !Number.isNaN(year)) {
     where.AND = [
