@@ -2,9 +2,15 @@ generator client {
   provider = "prisma-client-js"
 }
 
+//datasource db {
+//  provider = "postgresql"
+//  url      = env("DATABASE_URL")
+//}
+
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 model Category {
@@ -14,15 +20,19 @@ model Category {
   parentId    String?
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
-
-  // Relations
+  image       String?
+  description String?
   parent      Category?         @relation("ParentChild", fields: [parentId], references: [id])
   children    Category[]        @relation("ParentChild")
   products    ProductCategory[]
+    // New, all OPTIONAL (nullable) so the first migration is safe:
+  shopifyPageId  String?   @db.VarChar(191) // Shopify Page numeric ID as string
+  shopifyHandle  String?   @db.VarChar(191) // actual handle Shopify ended up with
+  lastSyncedAt   DateTime?
 
-  // NEW (optional)
-  image       String?
-  description String?
+  // Nice-to-have indexes
+  @@index([shopifyHandle])
+  @@index([shopifyPageId])
 }
 
 model ProductCategory {
@@ -35,43 +45,41 @@ model ProductCategory {
 }
 
 model ProductFitment {
-  id         String @id @default(cuid())
+  id         String   @id @default(cuid())
   productGid String
-  // Basic YMM; add trim/chassis/body if you want
   yearFrom   Int?
   yearTo     Int?
   make       String
   model      String
-  trim       String?   // optional
-  chassis    String?   // optional
-
+  trim       String?
+  chassis    String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  @@unique([productGid, make, model, yearFrom, yearTo, trim, chassis])
   @@index([productGid])
   @@index([make, model])
   @@index([yearFrom, yearTo])
-  @@unique([productGid, make, model, yearFrom, yearTo, trim, chassis])
-}
-enum FitTermType {
-  MAKE
-  MODEL
-  TRIM
-  CHASSIS
 }
 
 model FitTerm {
   id        String      @id @default(cuid())
   type      FitTermType
   name      String
-  parentId  String?     // MODEL -> MAKE, TRIM -> MODEL; CHASSIS can be standalone or parented if you want
+  parentId  String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
   parent    FitTerm?    @relation("FitTermParentChild", fields: [parentId], references: [id])
   children  FitTerm[]   @relation("FitTermParentChild")
 
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-
+  @@unique([type, name, parentId])
   @@index([type])
   @@index([parentId])
-  @@unique([type, name, parentId])
+}
+
+enum FitTermType {
+  MAKE
+  MODEL
+  TRIM
+  CHASSIS
 }
