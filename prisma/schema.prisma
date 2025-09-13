@@ -2,11 +2,6 @@ generator client {
   provider = "prisma-client-js"
 }
 
-//datasource db {
-//  provider = "postgresql"
-//  url      = env("DATABASE_URL")
-//}
-
 datasource db {
   provider          = "postgresql"
   url               = env("DATABASE_URL")
@@ -14,23 +9,21 @@ datasource db {
 }
 
 model Category {
-  id          String            @id @default(cuid())
-  title       String
-  slug        String            @unique
-  parentId    String?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  image       String?
-  description String?
-  parent      Category?         @relation("ParentChild", fields: [parentId], references: [id])
-  children    Category[]        @relation("ParentChild")
-  products    ProductCategory[]
-    // New, all OPTIONAL (nullable) so the first migration is safe:
-  shopifyPageId  String?   @db.VarChar(191) // Shopify Page numeric ID as string
-  shopifyHandle  String?   @db.VarChar(191) // actual handle Shopify ended up with
-  lastSyncedAt   DateTime?
+  id            String            @id @default(cuid())
+  title         String
+  slug          String            @unique
+  parentId      String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  description   String?
+  image         String?
+  lastSyncedAt  DateTime?
+  shopifyHandle String?           @db.VarChar(191)
+  shopifyPageId String?           @db.VarChar(191)
+  parent        Category?         @relation("ParentChild", fields: [parentId], references: [id])
+  children      Category[]        @relation("ParentChild")
+  products      ProductCategory[]
 
-  // Nice-to-have indexes
   @@index([shopifyHandle])
   @@index([shopifyPageId])
 }
