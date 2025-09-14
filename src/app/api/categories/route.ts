@@ -1,9 +1,10 @@
 // /src/app/api/categories/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { shopifyAdminREST } from '@/lib/shopify';
 
 /* =========================
-   Types
+   Types (align with Prisma)
 ========================= */
 
 type CategoryRow = {
@@ -11,15 +12,11 @@ type CategoryRow = {
   title: string;
   slug: string;
   parentId: string | null;
-  image: string | null;
+  image: string | null;     // <— ensure this matches your Prisma model
   description: string | null;
-  // NOTE: we don't have to select the Shopify columns for the admin tree,
-  // but we may use them during POST/PUT/DELETE operations.
 };
 
-type CategoryNode = CategoryRow & {
-  children: CategoryNode[];
-};
+type CategoryNode = CategoryRow & { children: CategoryNode[] };
 
 type CreateBody = {
   title: string;
@@ -38,71 +35,37 @@ type UpdateBody = {
   description?: string | null;
 };
 
-type DeleteBody = {
-  id: string;
-};
+type DeleteBody = { id: string };
 
 /* =========================
-   Optional Shopify sync
+   Shopify helpers
 ========================= */
 
-const SHOP = process.env.SHOPIFY_SHOP;
-const TOKEN = process.env.SHOPIFY_ADMIN_TOKEN;
-const SHOPIFY_ENABLED = Boolean(SHOP && TOKEN);
+const SHOPIFY_ENABLED = Boolean(
+  process.env.SHOPIFY_SHOP && process.env.SHOPIFY_ADMIN_TOKEN
+);
 
-// Minimal shape for a Shopify Page response
-interface ShopifyPage {
+interface ShopifyPageShape {
   id: number | string;
   handle?: string;
   title?: string;
   body_html?: string;
 }
-
-interface ShopifyPageResponse {
-  page?: ShopifyPage;
-}
-
-async function shopifyFetch<T = unknown>(
-  path: string,
-  init?: RequestInit
-): Promise<T> {
-  if (!SHOPIFY_ENABLED) {
-    // @ts-expect-error - only used when Shopify is configured
-    throw new Error('Shopify not configured');
-  }
-  const url = `https://${SHOP}/admin/api/2024-07${path}`;
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Shopify-Access-Token': TOKEN as string,
-      ...(init?.headers ?? {}),
-    },
-    cache: 'no-store',
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Shopify ${res.status} ${res.statusText} – ${text}`);
-  }
-  // DELETE often returns an empty body – guard it
-  const contentType = res.headers.get('content-type') || '';
-  if (!contentType.includes('application/json')) {
-    // @ts-expect-error - caller controls expected type
-    return undefined;
-  }
-  return (await res.json()) as T;
+interface ShopifyCreateUpdateResp {
+  page?: ShopifyPageShape;
 }
 
 function categoryToShopifyPagePayload(cat: {
   title: string;
   description: string | null;
+  slug: string;
 }) {
   return {
     page: {
       title: cat.title,
       body_html: cat.description ?? '',
-      // You *can* set published: true/false if you want to control visibility
-      // published: true,
+      handle: cat.slug, // keep Shopify handle in sync with your slug
+      published: true,
     },
   };
 }
@@ -111,69 +74,67 @@ async function ensureShopifyPageForCategory(cat: {
   id: string;
   title: string;
   description: string | null;
-  shopifyPageId: string | null;
   slug: string;
-}) {
-  if (!SHOPIFY_ENABLED) return { id: null as string | null, handle: null as string | null };
+  shopifyPageId: string | null;
+}): Promise<{ id: string | null; handle: string | null }> {
+  if (!SHOPIFY_ENABLED) return { id: null, handle: null };
 
-  // create or update
+  const payload = categoryToShopifyPagePayload(cat);
+
+  // Update existing page
   if (cat.shopifyPageId) {
-    // Update existing page
-    const payload = categoryToShopifyPagePayload(cat);
-    const resp = await shopifyFetch<ShopifyPageResponse>(`/pages/${cat.shopifyPageId}.json`, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    });
+    const resp = await shopifyAdminREST<ShopifyCreateUpdateResp>(
+      `/pages/${encodeURIComponent(cat.shopifyPageId)}.json`,
+      { method: 'PUT', body: JSON.stringify(payload) }
+    );
     return {
-      id: String(resp.page?.id ?? cat.shopifyPageId),
-      handle: resp.page?.handle ?? null,
-    };
-  } else {
-    // Create new page
-    const payload = categoryToShopifyPagePayload(cat);
-    const resp = await shopifyFetch<ShopifyPageResponse>(`/pages.json`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    return {
-      id: resp.page ? String(resp.page.id) : null,
+      id: resp.page ? String(resp.page.id) : cat.shopifyPageId,
       handle: resp.page?.handle ?? null,
     };
   }
+
+  // Create new page
+  const resp = await shopifyAdminREST<ShopifyCreateUpdateResp>(
+    `/pages.json`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  );
+  return {
+    id: resp.page ? String(resp.page.id) : null,
+    handle: resp.page?.handle ?? null,
+  };
 }
 
-async function deleteShopifyPageById(id: string) {
+async function deleteShopifyPageById(pageId: string): Promise<void> {
   if (!SHOPIFY_ENABLED) return;
-  await shopifyFetch<void>(`/pages/${id}.json`, { method: 'DELETE' });
+  await shopifyAdminREST<void>(`/pages/${encodeURIComponent(pageId)}.json`, {
+    method: 'DELETE',
+  });
 }
 
 /* =========================
-   Helpers
+   Local helpers
 ========================= */
 
 function buildTree(all: CategoryRow[], parentId: string | null): CategoryNode[] {
   return all
     .filter((c) => c.parentId === parentId)
-    .map((c) => ({
-      ...c,
-      children: buildTree(all, c.id),
-    }));
+    .map((c) => ({ ...c, children: buildTree(all, c.id) }));
 }
 
 /* =========================
    Routes
 ========================= */
 
-// GET: return full tree for the admin UI
+// GET: full tree for admin UI
 export async function GET() {
-  const rows: CategoryRow[] = await prisma.category.findMany({
+  const rows = await prisma.category.findMany({
     orderBy: [{ parentId: 'asc' }, { title: 'asc' }],
     select: {
       id: true,
       title: true,
       slug: true,
       parentId: true,
-      image: true,
+      image: true,      // <— keep consistent with model
       description: true,
     },
   });
@@ -182,7 +143,7 @@ export async function GET() {
   return NextResponse.json(tree);
 }
 
-// POST: create a category (and optionally create/update Shopify page)
+// POST: create category (+ optional Shopify page upsert)
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as CreateBody;
@@ -211,9 +172,8 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Try to sync to Shopify (best effort)
-    let shopifyPageId: string | null = created.shopifyPageId;
-    let shopifyHandle: string | null = created.shopifyHandle;
+    let shopifyPageId = created.shopifyPageId;
+    let shopifyHandle = created.shopifyHandle;
 
     if (SHOPIFY_ENABLED) {
       try {
@@ -221,8 +181,8 @@ export async function POST(req: NextRequest) {
           id: created.id,
           title: created.title,
           description: created.description,
-          shopifyPageId: created.shopifyPageId,
           slug: created.slug,
+          shopifyPageId: created.shopifyPageId,
         });
 
         if (res.id || res.handle) {
@@ -239,23 +199,18 @@ export async function POST(req: NextRequest) {
           shopifyHandle = saved.shopifyHandle;
         }
       } catch (e) {
-        // Don’t fail the API if Shopify failed – just log
         console.error('[categories:POST] Shopify sync failed', e);
       }
     }
 
-    return NextResponse.json({
-      ...created,
-      shopifyPageId,
-      shopifyHandle,
-    });
+    return NextResponse.json({ ...created, shopifyPageId, shopifyHandle });
   } catch (err) {
     console.error('POST /api/categories error', err);
     return NextResponse.json({ error: 'Failed to create category' }, { status: 500 });
   }
 }
 
-// PUT: update a category (and optionally upsert Shopify page)
+// PUT: update category (+ optional Shopify page upsert)
 export async function PUT(req: NextRequest) {
   try {
     const body = (await req.json()) as UpdateBody;
@@ -263,12 +218,19 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Missing id' }, { status: 400 });
     }
 
-    const data: Record<string, string | null> & { parentId?: string | null } = {};
+    // Build partial update data
+    const data: {
+      title?: string;
+      slug?: string;
+      parentId?: string | null;
+      image?: string | null;
+      description?: string | null;
+    } = {};
     if (typeof body.title === 'string') data.title = body.title;
     if (typeof body.slug === 'string') data.slug = body.slug;
     if (body.parentId !== undefined) data.parentId = body.parentId;
-    if (body.image !== undefined) data.image = body.image ?? null;
-    if (body.description !== undefined) data.description = body.description ?? null;
+    if (body.image !== undefined) data.image = body.image;
+    if (body.description !== undefined) data.description = body.description;
 
     const updated = await prisma.category.update({
       where: { id: body.id },
@@ -285,15 +247,14 @@ export async function PUT(req: NextRequest) {
       },
     });
 
-    // Try to sync to Shopify (best effort)
     if (SHOPIFY_ENABLED) {
       try {
         const res = await ensureShopifyPageForCategory({
           id: updated.id,
           title: updated.title,
           description: updated.description,
-          shopifyPageId: updated.shopifyPageId,
           slug: updated.slug,
+          shopifyPageId: updated.shopifyPageId,
         });
 
         if (res.id || res.handle) {
@@ -330,7 +291,7 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-// DELETE: delete a category (and optionally delete Shopify page)
+// DELETE: delete category (+ optional Shopify page delete)
 export async function DELETE(req: NextRequest) {
   try {
     const body = (await req.json()) as DeleteBody;
@@ -338,7 +299,7 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Missing id' }, { status: 400 });
     }
 
-    // Fetch the record first so we can see shopifyPageId before removal
+    // Read first so we have the page id before removal
     const existing = await prisma.category.findUnique({
       where: { id: body.id },
       select: { id: true, shopifyPageId: true },
@@ -348,18 +309,16 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
-    // Best-effort Shopify delete
     if (SHOPIFY_ENABLED && existing.shopifyPageId) {
       try {
         await deleteShopifyPageById(existing.shopifyPageId);
       } catch (e) {
         console.error('[categories:DELETE] Shopify page delete failed', e);
-        // Continue anyway, you may opt to stop deletion if you prefer hard consistency
+        // continue anyway
       }
     }
 
     await prisma.category.delete({ where: { id: body.id } });
-
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error('DELETE /api/categories error', err);
