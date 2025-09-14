@@ -64,6 +64,7 @@ function categoryToShopifyPagePayload(cat: {
     page: {
       title: cat.title,
       body_html: cat.description ?? '',
+      template_suffix: 'category',
       handle: cat.slug, // keep Shopify handle in sync with your slug
       published: true,
     },
