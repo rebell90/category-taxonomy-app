@@ -2,7 +2,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 
-// ---------- Types ----------
+/* =========================
+   Types
+========================= */
+
 type CategoryRow = {
   id: string;
   title: string;
@@ -10,149 +13,158 @@ type CategoryRow = {
   parentId: string | null;
   image: string | null;
   description: string | null;
-  shopifyPageId?: string | null;
-  shopifyHandle?: string | null;
-  lastSyncedAt?: Date | null;
+  // NOTE: we don't have to select the Shopify columns for the admin tree,
+  // but we may use them during POST/PUT/DELETE operations.
 };
 
-type CategoryNode = CategoryRow & { children: CategoryNode[] };
+type CategoryNode = CategoryRow & {
+  children: CategoryNode[];
+};
 
-// ---------- Shopify helpers ----------
-const SHOP = process.env.SHOPIFY_SHOP_URL; // e.g. my-store.myshopify.com
-const TOKEN = process.env.SHOPIFY_ADMIN_TOKEN || process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+type CreateBody = {
+  title: string;
+  slug: string;
+  parentId?: string | null;
+  image?: string | null;
+  description?: string | null;
+};
 
-function shopifyURL(path: string) {
-  if (!SHOP) throw new Error('Missing SHOPIFY_SHOP_URL');
-  return `https://${SHOP}/admin/api/2024-07${path}`;
+type UpdateBody = {
+  id: string;
+  title?: string;
+  slug?: string;
+  parentId?: string | null;
+  image?: string | null;
+  description?: string | null;
+};
+
+type DeleteBody = {
+  id: string;
+};
+
+/* =========================
+   Optional Shopify sync
+========================= */
+
+const SHOP = process.env.SHOPIFY_SHOP;
+const TOKEN = process.env.SHOPIFY_ADMIN_TOKEN;
+const SHOPIFY_ENABLED = Boolean(SHOP && TOKEN);
+
+// Minimal shape for a Shopify Page response
+interface ShopifyPage {
+  id: number | string;
+  handle?: string;
+  title?: string;
+  body_html?: string;
 }
 
-async function shopifyFetch(path: string, init?: RequestInit) {
-  if (!TOKEN) throw new Error('Missing SHOPIFY_ADMIN_TOKEN/SHOPIFY_ADMIN_ACCESS_TOKEN');
-  const res = await fetch(shopifyURL(path), {
+interface ShopifyPageResponse {
+  page?: ShopifyPage;
+}
+
+async function shopifyFetch<T = unknown>(
+  path: string,
+  init?: RequestInit
+): Promise<T> {
+  if (!SHOPIFY_ENABLED) {
+    // @ts-expect-error - only used when Shopify is configured
+    throw new Error('Shopify not configured');
+  }
+  const url = `https://${SHOP}/admin/api/2024-07${path}`;
+  const res = await fetch(url, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
-      'X-Shopify-Access-Token': TOKEN,
-      ...(init?.headers || {}),
+      'X-Shopify-Access-Token': TOKEN as string,
+      ...(init?.headers ?? {}),
     },
-    // Render/Next edge: ensure not reusing cookies
     cache: 'no-store',
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`Shopify ${res.status} ${res.statusText}: ${text}`);
+    throw new Error(`Shopify ${res.status} ${res.statusText} – ${text}`);
   }
-  return res.json();
+  // DELETE often returns an empty body – guard it
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    // @ts-expect-error - caller controls expected type
+    return undefined;
+  }
+  return (await res.json()) as T;
 }
 
-/** Build HTML body for the Shopify page from a category */
-function buildBodyHtml(c: Pick<CategoryRow, 'title'|'description'|'image'|'slug'>) {
-  const parts: string[] = [];
-  if (c.description) parts.push(`<p>${c.description}</p>`);
-  if (c.image) parts.push(`<p><img alt="${c.title || c.slug}" src="${c.image}"/></p>`);
-  // you can add more here (links to child cats, etc.)
-  return parts.join('\n') || `<p>${c.title}</p>`;
-}
-
-/** Create a Shopify page */
-async function createShopifyPageForCategory(c: CategoryRow) {
-  const body_html = buildBodyHtml(c);
-  // Try to use your slug as handle; let Shopify normalize if needed
-  const res = await shopifyFetch(`/pages.json`, {
-    method: 'POST',
-    body: JSON.stringify({
-      page: {
-        title: c.title,
-        body_html,
-        handle: c.slug,
-        published: true,
-      },
-    }),
-  });
-
-  // shape: { page: { id, handle, ... } }
-  const page = res?.page;
-  return { id: String(page?.id || ''), handle: String(page?.handle || c.slug) };
-}
-
-/** Update an existing Shopify page */
-async function updateShopifyPageForCategory(shopifyPageId: string, c: CategoryRow) {
-  const body_html = buildBodyHtml(c);
-  const res = await shopifyFetch(`/pages/${shopifyPageId}.json`, {
-    method: 'PUT',
-    body: JSON.stringify({
-      page: {
-        id: shopifyPageId,
-        title: c.title,
-        body_html,
-        handle: c.slug, // if you want Shopify to attempt to align handle with slug
-        published: true,
-      },
-    }),
-  });
-  const page = res?.page;
-  return { id: String(page?.id || shopifyPageId), handle: String(page?.handle || c.slug) };
-}
-
-/** Delete a Shopify page */
-async function deleteShopifyPage(shopifyPageId: string) {
-  await shopifyFetch(`/pages/${shopifyPageId}.json`, { method: 'DELETE' });
-}
-
-/** Ensure Shopify page exists/updated for this Category; then persist IDs on our side */
-async function ensureShopifySync(categoryId: string) {
-  // Read what we need
-  const cat = await prisma.category.findUnique({
-    where: { id: categoryId },
-    select: {
-      id: true, title: true, slug: true, image: true, description: true,
-      shopifyPageId: true, shopifyHandle: true,
+function categoryToShopifyPagePayload(cat: {
+  title: string;
+  description: string | null;
+}) {
+  return {
+    page: {
+      title: cat.title,
+      body_html: cat.description ?? '',
+      // You *can* set published: true/false if you want to control visibility
+      // published: true,
     },
-  });
-  if (!cat) throw new Error('Category not found');
+  };
+}
 
-  try {
-    let pageId = cat.shopifyPageId || null;
-    let handle = cat.shopifyHandle || cat.slug;
+async function ensureShopifyPageForCategory(cat: {
+  id: string;
+  title: string;
+  description: string | null;
+  shopifyPageId: string | null;
+  slug: string;
+}) {
+  if (!SHOPIFY_ENABLED) return { id: null as string | null, handle: null as string | null };
 
-    if (!pageId) {
-      // create new
-      const created = await createShopifyPageForCategory(cat as any);
-      pageId = created.id;
-      handle = created.handle;
-    } else {
-      // update existing
-      const updated = await updateShopifyPageForCategory(pageId, cat as any);
-      pageId = updated.id;
-      handle = updated.handle;
-    }
-
-    await prisma.category.update({
-      where: { id: categoryId },
-      data: { shopifyPageId: pageId, shopifyHandle: handle, lastSyncedAt: new Date() },
-      select: { id: true },
+  // create or update
+  if (cat.shopifyPageId) {
+    // Update existing page
+    const payload = categoryToShopifyPagePayload(cat);
+    const resp = await shopifyFetch<ShopifyPageResponse>(`/pages/${cat.shopifyPageId}.json`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
     });
-  } catch (err) {
-    // Don’t fail the API write—just log. You can make this fatal if you prefer.
-    console.warn('[categories] Shopify sync failed for category', categoryId, err);
+    return {
+      id: String(resp.page?.id ?? cat.shopifyPageId),
+      handle: resp.page?.handle ?? null,
+    };
+  } else {
+    // Create new page
+    const payload = categoryToShopifyPagePayload(cat);
+    const resp = await shopifyFetch<ShopifyPageResponse>(`/pages.json`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    return {
+      id: resp.page ? String(resp.page.id) : null,
+      handle: resp.page?.handle ?? null,
+    };
   }
 }
 
-/** Try delete Shopify page but ignore errors */
-async function tryDeleteShopifyPageIfLinked(categoryId: string) {
-  const cat = await prisma.category.findUnique({
-    where: { id: categoryId },
-    select: { shopifyPageId: true },
-  });
-  if (!cat?.shopifyPageId) return;
-  try {
-    await deleteShopifyPage(cat.shopifyPageId);
-  } catch (err) {
-    console.warn('[categories] Shopify page delete failed', cat.shopifyPageId, err);
-  }
+async function deleteShopifyPageById(id: string) {
+  if (!SHOPIFY_ENABLED) return;
+  await shopifyFetch<void>(`/pages/${id}.json`, { method: 'DELETE' });
 }
 
-// ---------- GET (tree for admin UI) ----------
+/* =========================
+   Helpers
+========================= */
+
+function buildTree(all: CategoryRow[], parentId: string | null): CategoryNode[] {
+  return all
+    .filter((c) => c.parentId === parentId)
+    .map((c) => ({
+      ...c,
+      children: buildTree(all, c.id),
+    }));
+}
+
+/* =========================
+   Routes
+========================= */
+
+// GET: return full tree for the admin UI
 export async function GET() {
   const rows: CategoryRow[] = await prisma.category.findMany({
     orderBy: [{ parentId: 'asc' }, { title: 'asc' }],
@@ -163,71 +175,95 @@ export async function GET() {
       parentId: true,
       image: true,
       description: true,
-      // helpful to see sync status in your admin UI (optional)
-      shopifyPageId: true,
-      shopifyHandle: true,
-      lastSyncedAt: true,
     },
   });
 
-  const buildTree = (all: CategoryRow[], parentId: string | null): CategoryNode[] =>
-    all
-      .filter(c => c.parentId === parentId)
-      .map(c => ({ ...c, children: buildTree(all, c.id) }));
-
-  return NextResponse.json(buildTree(rows, null));
+  const tree = buildTree(rows, null);
+  return NextResponse.json(tree);
 }
 
-// ---------- POST: create ----------
+// POST: create a category (and optionally create/update Shopify page)
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as Partial<CategoryRow>;
-    const { title, slug } = body;
-    if (!title || !slug) {
+    const body = (await req.json()) as CreateBody;
+
+    if (!body.title || !body.slug) {
       return NextResponse.json({ error: 'Title and slug are required' }, { status: 400 });
     }
 
     const created = await prisma.category.create({
       data: {
-        title,
-        slug,
+        title: body.title,
+        slug: body.slug,
         parentId: body.parentId ?? null,
         image: body.image ?? null,
         description: body.description ?? null,
       },
       select: {
-        id: true, title: true, slug: true, parentId: true, image: true, description: true,
-        shopifyPageId: true, shopifyHandle: true, lastSyncedAt: true,
+        id: true,
+        title: true,
+        slug: true,
+        parentId: true,
+        image: true,
+        description: true,
+        shopifyPageId: true,
+        shopifyHandle: true,
       },
     });
 
-    // best-effort sync to Shopify (won’t block if it fails)
-    await ensureShopifySync(created.id);
+    // Try to sync to Shopify (best effort)
+    let shopifyPageId: string | null = created.shopifyPageId;
+    let shopifyHandle: string | null = created.shopifyHandle;
 
-    // return fresh row (with Shopify fields possibly filled)
-    const fresh = await prisma.category.findUnique({
-      where: { id: created.id },
-      select: {
-        id: true, title: true, slug: true, parentId: true, image: true, description: true,
-        shopifyPageId: true, shopifyHandle: true, lastSyncedAt: true,
-      },
+    if (SHOPIFY_ENABLED) {
+      try {
+        const res = await ensureShopifyPageForCategory({
+          id: created.id,
+          title: created.title,
+          description: created.description,
+          shopifyPageId: created.shopifyPageId,
+          slug: created.slug,
+        });
+
+        if (res.id || res.handle) {
+          const saved = await prisma.category.update({
+            where: { id: created.id },
+            data: {
+              shopifyPageId: res.id,
+              shopifyHandle: res.handle,
+              lastSyncedAt: new Date(),
+            },
+            select: { shopifyPageId: true, shopifyHandle: true },
+          });
+          shopifyPageId = saved.shopifyPageId;
+          shopifyHandle = saved.shopifyHandle;
+        }
+      } catch (e) {
+        // Don’t fail the API if Shopify failed – just log
+        console.error('[categories:POST] Shopify sync failed', e);
+      }
+    }
+
+    return NextResponse.json({
+      ...created,
+      shopifyPageId,
+      shopifyHandle,
     });
-
-    return NextResponse.json(fresh);
   } catch (err) {
     console.error('POST /api/categories error', err);
     return NextResponse.json({ error: 'Failed to create category' }, { status: 500 });
   }
 }
 
-// ---------- PUT: update ----------
+// PUT: update a category (and optionally upsert Shopify page)
 export async function PUT(req: NextRequest) {
   try {
-    const body = (await req.json()) as Partial<CategoryRow> & { id?: string };
-    const { id } = body;
-    if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+    const body = (await req.json()) as UpdateBody;
+    if (!body.id) {
+      return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+    }
 
-    const data: Record<string, unknown> = {};
+    const data: Record<string, string | null> & { parentId?: string | null } = {};
     if (typeof body.title === 'string') data.title = body.title;
     if (typeof body.slug === 'string') data.slug = body.slug;
     if (body.parentId !== undefined) data.parentId = body.parentId;
@@ -235,42 +271,95 @@ export async function PUT(req: NextRequest) {
     if (body.description !== undefined) data.description = body.description ?? null;
 
     const updated = await prisma.category.update({
-      where: { id },
+      where: { id: body.id },
       data,
       select: {
-        id: true, title: true, slug: true, parentId: true, image: true, description: true,
-        shopifyPageId: true, shopifyHandle: true, lastSyncedAt: true,
+        id: true,
+        title: true,
+        slug: true,
+        parentId: true,
+        image: true,
+        description: true,
+        shopifyPageId: true,
+        shopifyHandle: true,
       },
     });
 
-    // best-effort sync/update in Shopify
-    await ensureShopifySync(id);
+    // Try to sync to Shopify (best effort)
+    if (SHOPIFY_ENABLED) {
+      try {
+        const res = await ensureShopifyPageForCategory({
+          id: updated.id,
+          title: updated.title,
+          description: updated.description,
+          shopifyPageId: updated.shopifyPageId,
+          slug: updated.slug,
+        });
 
-    const fresh = await prisma.category.findUnique({
-      where: { id },
-      select: {
-        id: true, title: true, slug: true, parentId: true, image: true, description: true,
-        shopifyPageId: true, shopifyHandle: true, lastSyncedAt: true,
-      },
-    });
+        if (res.id || res.handle) {
+          const saved = await prisma.category.update({
+            where: { id: updated.id },
+            data: {
+              shopifyPageId: res.id,
+              shopifyHandle: res.handle,
+              lastSyncedAt: new Date(),
+            },
+            select: {
+              id: true,
+              title: true,
+              slug: true,
+              parentId: true,
+              image: true,
+              description: true,
+              shopifyPageId: true,
+              shopifyHandle: true,
+              lastSyncedAt: true,
+            },
+          });
+          return NextResponse.json(saved);
+        }
+      } catch (e) {
+        console.error('[categories:PUT] Shopify sync failed', e);
+      }
+    }
 
-    return NextResponse.json(fresh);
+    return NextResponse.json(updated);
   } catch (err) {
     console.error('PUT /api/categories error', err);
     return NextResponse.json({ error: 'Failed to update category' }, { status: 500 });
   }
 }
 
-// ---------- DELETE ----------
+// DELETE: delete a category (and optionally delete Shopify page)
 export async function DELETE(req: NextRequest) {
   try {
-    const body = (await req.json()) as { id?: string };
-    if (!body.id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+    const body = (await req.json()) as DeleteBody;
+    if (!body.id) {
+      return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+    }
 
-    // try to remove the mapped Shopify page (best-effort)
-    await tryDeleteShopifyPageIfLinked(body.id);
+    // Fetch the record first so we can see shopifyPageId before removal
+    const existing = await prisma.category.findUnique({
+      where: { id: body.id },
+      select: { id: true, shopifyPageId: true },
+    });
+
+    if (!existing) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
+    // Best-effort Shopify delete
+    if (SHOPIFY_ENABLED && existing.shopifyPageId) {
+      try {
+        await deleteShopifyPageById(existing.shopifyPageId);
+      } catch (e) {
+        console.error('[categories:DELETE] Shopify page delete failed', e);
+        // Continue anyway, you may opt to stop deletion if you prefer hard consistency
+      }
+    }
 
     await prisma.category.delete({ where: { id: body.id } });
+
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error('DELETE /api/categories error', err);
