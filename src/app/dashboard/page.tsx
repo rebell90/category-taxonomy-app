@@ -11,13 +11,6 @@ export default function DashboardHome() {
           </p>
         </a>
 
-        <a href="/dashboard/tree" className="block border rounded-lg p-5 hover:shadow">
-          <div className="text-lg text-gray-600 font-semibold">View Category Tree</div>
-          <p className="text-sm text-gray-600 mt-1">
-            Tree-view of category taxonomy.
-          </p>
-        </a>
-
        <a href="/dashboard/fit-terms" className="block border rounded-lg p-5 hover:shadow">
           <div className="text-lg text-gray-600 font-semibold">Fitment Terms</div>
           <p className="text-sm text-gray-600 mt-1">
