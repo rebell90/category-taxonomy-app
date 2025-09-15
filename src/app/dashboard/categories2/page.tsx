@@ -13,8 +13,6 @@ type Category = {
   children?: Category[]
 }
 
-type CollapsedMap = Record<string, boolean>;
-
 export default function CategoriesPage() {
   const [tree, setTree] = useState<Category[]>([])
   const [flat, setFlat] = useState<Category[]>([])
@@ -164,138 +162,38 @@ export default function CategoriesPage() {
     setDescription(cat.description ?? '')
   }
 
-const [collapsed, setCollapsed] = useState<CollapsedMap>({});
-
-const expandAll = useCallback(() => {
-  const next: CollapsedMap = {};
-  const walk = (nodes: Category[]) => {
-    for (const n of nodes) {
-      next[n.id] = false; // expanded
-      if (n.children?.length) walk(n.children);
-    }
-  };
-  walk(tree);
-  setCollapsed(next);
-}, [tree]);
-
-const collapseAll = useCallback(() => {
-  const next: CollapsedMap = {};
-  const walk = (nodes: Category[]) => {
-    for (const n of nodes) {
-      next[n.id] = true; // collapsed
-      if (n.children?.length) walk(n.children);
-    }
-  };
-  walk(tree);
-  setCollapsed(next);
-}, [tree]);
-
-const toggleOne = useCallback((id: string) => {
-  setCollapsed(prev => ({ ...prev, [id]: !prev[id] }));
-}, []);
-
-function renderTree(nodes: Category[]) {
-  return (
-    <ul className="cat-tree list-none pl-0">
+  const renderTree = (nodes: Category[]) => (
+    <ul className="ml-4 list-disc space-y-1">
       {nodes.map((cat) => (
         <li key={cat.id}>
-          <TreeNode
-            cat={cat}
-            collapsed={!!collapsed[cat.id]}
-            onToggle={() => toggleOne(cat.id)}
-            onEdit={() => beginEdit(cat)}
-            onDelete={() => handleDelete(cat.id)}
-          />
-          {cat.children?.length ? (
-            <ul
-              className="children ml-4 pl-3 border-l border-slate-200"
-              style={{ display: collapsed[cat.id] ? 'none' : '' }}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-gray-900">{cat.title}</span>
+            <span className="text-xs text-gray-600">/ {cat.slug}</span>
+            {cat.image && <span className="text-xs text-gray-600">(img)</span>}
+            <button
+              onClick={() => beginEdit(cat)}
+              className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
             >
-              {renderTree(cat.children)}
-            </ul>
-          ) : null}
+              Edit
+            </button>
+            <button
+              onClick={() => handleDelete(cat.id)}
+              className="text-xs px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700"
+            >
+              Delete
+            </button>
+          </div>
+          {cat.children && cat.children.length > 0 && renderTree(cat.children)}
         </li>
       ))}
     </ul>
-  );
-}
+  )
 
   const parentOptions = useMemo(
     () => [{ id: '', title: '(None)' }, ...flat.map((c) => ({ id: c.id, title: c.title }))],
     [flat]
   )
 
-  // --- ADD THIS helper component in the same file (below the page component or above, your choice) ---
-function TreeNode({
-  cat,
-  collapsed,
-  onToggle,
-  onEdit,
-  onDelete,
-}: {
-  cat: Category;
-  collapsed: boolean;
-  onToggle: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  const hasKids = (cat.children?.length ?? 0) > 0;
-  return (
-    <div
-      className="cat-node group flex items-center gap-2 rounded-md px-2 py-1 hover:bg-slate-50"
-    >
-      {hasKids ? (
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? 'Expand' : 'Collapse'}
-          className="twisty inline-flex h-5 w-5 items-center justify-center rounded border border-slate-300 text-[10px] text-slate-600"
-          title={collapsed ? 'Expand' : 'Collapse'}
-        >
-          {collapsed ? '▸' : '▾'}
-        </button>
-      ) : (
-        <span className="inline-block h-5 w-5" />
-      )}
-
-      <span className="title font-semibold text-slate-900">{cat.title}</span>
-
-      <span className="slug-badge ml-1 text-xs text-slate-600 bg-slate-100 border border-slate-200 rounded px-1">
-        / {cat.slug}
-      </span>
-
-      {cat.image ? (
-        <span
-          className="ml-1 badge text-[10px] px-1.5 py-0.5 rounded-full border border-cyan-200 bg-cyan-50 text-cyan-800"
-          title="Has image"
-        >
-          img
-        </span>
-      ) : null}
-
-      {/* actions on the far right, hidden until hover/focus */}
-      <div className="actions ml-auto opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 inline-flex gap-1">
-        <button
-          type="button"
-          onClick={onEdit}
-          className="btn text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
-        >
-          Edit
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            if (confirm(`Delete “${cat.title}”?`)) onDelete();
-          }}
-          className="btn text-xs px-2 py-1 rounded border border-red-200 bg-rose-50 text-rose-800 hover:bg-rose-100"
-        >
-          Delete
-        </button>
-      </div>
-    </div>
-  );
-}
   return (
     <main className="p-6">
       <h1 className="text-2xl font-bold text-gray-900 mb-4">Manage Category Tree</h1>
@@ -383,28 +281,12 @@ function TreeNode({
         </div>
       </form>
 
-<h2 className="text-xl font-semibold text-gray-900 mb-2">Category Tree</h2>
-<div className="mb-3 flex items-center gap-2">
-  <button
-    type="button"
-    onClick={expandAll}
-    className="text-xs px-2 py-1 rounded border border-slate-300 text-slate-900 bg-white hover:bg-slate-50"
-  >
-    Expand all
-  </button>
-  <button
-    type="button"
-    onClick={collapseAll}
-    className="text-xs px-2 py-1 rounded border border-slate-300 text-slate-900 bg-white hover:bg-slate-50"
-  >
-    Collapse all
-  </button>
-</div>
-{loading ? (
-  <div className="text-gray-700">Loading…</div>
-) : (
-  renderTree(tree)
-)}
+      <h2 className="text-xl font-semibold text-gray-900 mb-2">Category Tree</h2>
+      {loading ? (
+        <div className="text-gray-700">Loading…</div>
+      ) : (
+        renderTree(tree)
+      )}
     </main>
   )
 }
