@@ -149,6 +149,61 @@ export default function AuditPage() {
     }
   }
 
+// Added 9.14.25 to allow for deleting a slug assignment from a product
+const [unassigningKey, setUnassigningKey] = useState<string | null>(null);
+
+async function handleUnassign(product: AuditItem, slug: string) {
+  setUnassigningKey(`${product.id}:${slug}`);
+  try {
+    const res = await fetch('/api/product-categories', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productGid: product.id, slug }),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(`Unassign failed: ${t}`);
+    }
+    // UPDATE UI
+    setItems(prev =>
+      prev.map(it =>
+        it.id === product.id
+          ? { ...it, slugs: it.slugs.filter(s => s !== slug) }
+          : it
+      )
+    );
+  } catch (e) {
+    console.error(e);
+    alert((e as Error).message || 'Failed to unassign category');
+  } finally {
+    setUnassigningKey(null);
+  }
+}
+
+async function handleUnassignAll(product: AuditItem) {
+  if (!confirm('Remove all category assignments for this product?')) return;
+  setUnassigningKey(`${product.id}:ALL`);
+  try {
+    const res = await fetch('/api/product-categories', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productGid: product.id, all: true }),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(`Unassign-all failed: ${t}`);
+    }
+    setItems(prev =>
+      prev.map(it => (it.id === product.id ? { ...it, slugs: [] } : it))
+    );
+  } catch (e) {
+    console.error(e);
+    alert((e as Error).message || 'Failed to unassign all categories');
+  } finally {
+    setUnassigningKey(null);
+  }
+}
+
   return (
     <main className="p-8 space-y-6">
       <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -202,23 +257,31 @@ export default function AuditPage() {
                   <div className="font-semibold text-slate-900">{r.title}</div>
                   <div className="text-xs text-slate-600">@{r.handle}</div>
                 </td>
-
-                <td className="p-3 align-top">
-                  {r.slugs.length === 0 ? (
-                    <span className="inline-block text-xs px-2 py-1 rounded bg-yellow-50 text-yellow-900 border border-yellow-300">
-                      Unassigned
-                    </span>
-                  ) : (
-                    <div className="flex flex-wrap gap-1">
-                      {r.slugs.map(s => (
-                        <span key={s} className="inline-block text-xs px-2 py-1 rounded bg-slate-100 border border-slate-300 text-slate-900">
-                          {s}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </td>
-
+              
+              <td className="p-3 align-top">
+                {r.slugs.length === 0 ? (
+                  <span className="inline-block text-xs px-2 py-1 rounded bg-yellow-50 text-yellow-900 border border-yellow-300">
+                    Unassigned
+                  </span>
+                ) : (
+                  <div className="flex flex-wrap gap-1">
+                    {r.slugs.map(s => (
+                     <span key={s} className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-slate-100 border border-slate-300 text-slate-900">
+                      {s}
+                    <button
+                      className="ml-1 text-slate-500 hover:text-red-700"
+                      title="Remove this assignment"
+                      onClick={() => handleUnassign(r, s)}
+                      disabled={unassigningKey === `${r.id}:${s}`}
+                      >
+                      {unassigningKey === `${r.id}:${s}` ? '…' : '×'}
+                    </button>
+                  </span>
+              ))}
+                  </div>
+            )}
+            </td>
+                
                 <td className="p-3 align-top">
                   <span className="text-xs text-slate-800">{r.status || '-'}</span>
                 </td>
@@ -263,18 +326,28 @@ export default function AuditPage() {
                       Replace existing slugs (use only the selected one)
                     </label>
 
-                    <div>
+                  <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleAssign(r)}
                         disabled={assigningId === r.id}
                         className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded px-3 py-2 disabled:opacity-60"
-                      >
-                        {assigningId === r.id ? 'Assigning…' : 'Assign Category'}
-                      </button>
-                    </div>
-                  </div>
-                </td>
-              </tr>
+                        >
+                       {assigningId === r.id ? 'Assigning…' : 'Assign Category'}
+                     </button>
+                  {r.slugs.length > 0 && (
+                      <button
+                      onClick={() => handleUnassignAll(r)}
+                      disabled={unassigningKey === `${r.id}:ALL`}
+                      className="inline-flex items-center gap-2 bg-white border border-slate-300 hover:bg-gray-50 text-slate-900 text-xs font-medium rounded px-3 py-2 disabled:opacity-60"
+                      title="Remove all category assignments from this product"
+                    >
+                      {unassigningKey === `${r.id}:ALL` ? 'Removing…' : 'Unassign all'}
+                    </button>
+                )}
+                 </div>
+              </div>
+            </td>    
+         </tr>
             ))}
             {filtered.length === 0 && (
               <tr>

@@ -12,12 +12,22 @@ type AssignBody = {
   replaceExisting?: boolean
 }
 
+/*
 type DeleteBody = {
   productGid?: string
   productId?: string
   categoryId?: string
   slug?: string
-}
+} */
+
+  type DeleteBody = {
+  productGid?: string;
+  productId?: string;        // numeric or gid
+  categoryId?: string;       // optional single
+  slug?: string;             // optional single
+  slugs?: string[];          // optional many
+  all?: boolean;             // nukes all assignments for the product
+};
 
 type LinkResult = { added: number; removed: number }
 
@@ -129,6 +139,7 @@ export async function POST(req: NextRequest) {
 }
 
 // ---------- DELETE (unlink) ----------
+/*
 export async function DELETE(req: NextRequest) {
   const body = (await req.json()) as DeleteBody
 
@@ -164,4 +175,68 @@ export async function DELETE(req: NextRequest) {
   await rebuildProductCategoryMetafield(productGid)
 
   return NextResponse.json({ success: true })
+}*/
+
+/* Updated DELETE handler for products */
+// ---------- DELETE (unlink: single, many, or all) ----------
+export async function DELETE(req: NextRequest) {
+  const body = (await req.json()) as DeleteBody;
+
+  // Normalize product
+  const rawProduct = body.productGid ?? body.productId ?? '';
+  const productGid = normalizeProductGid(String(rawProduct || ''));
+  if (!productGid) {
+    return NextResponse.json(
+      { error: 'Missing productGid/productId' },
+      { status: 400 }
+    );
+  }
+
+  // 1) Unassign ALL
+  if (body.all) {
+    const del = await prisma.productCategory.deleteMany({
+      where: { productGid },
+    });
+    await rebuildProductCategoryMetafield(productGid);
+    return NextResponse.json({ success: true, removed: del.count });
+  }
+
+  // 2) Unassign MANY by slugs array
+  if (Array.isArray(body.slugs) && body.slugs.length) {
+    const catIds = await idsFromSlugs(body.slugs.map(String));
+    if (!catIds.length) {
+      // nothing to delete; idempotent success
+      await rebuildProductCategoryMetafield(productGid);
+      return NextResponse.json({ success: true, removed: 0 });
+    }
+    const del = await prisma.productCategory.deleteMany({
+      where: { productGid, categoryId: { in: catIds } },
+    });
+    await rebuildProductCategoryMetafield(productGid);
+    return NextResponse.json({ success: true, removed: del.count });
+  }
+
+  // 3) Unassign ONE (by categoryId or slug)
+  let categoryId: string | null = body.categoryId ?? null;
+  if (!categoryId && body.slug) {
+    const found = await prisma.category.findUnique({
+      where: { slug: String(body.slug) },
+      select: { id: true },
+    });
+    categoryId = found?.id ?? null;
+  }
+  if (!categoryId) {
+    return NextResponse.json(
+      { error: 'Missing categoryId or resolvable slug' },
+      { status: 400 }
+    );
+  }
+
+  // Use deleteMany for idempotency (no 404 if link didn’t exist)
+  const del = await prisma.productCategory.deleteMany({
+    where: { productGid, categoryId },
+  });
+
+  await rebuildProductCategoryMetafield(productGid);
+  return NextResponse.json({ success: true, removed: del.count });
 }
