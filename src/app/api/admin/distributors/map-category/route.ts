@@ -1,4 +1,4 @@
-/ src/app/api/admin/distributors/map-category/route.ts
+// src/app/api/admin/distributors/map-category/route.ts
 // Map a distributor category to your taxonomy
 
 import { NextRequest, NextResponse } from 'next/server';

@@ -1,4 +1,5 @@
 // src/app/api/admin/distributors/scrape/route.ts
+// API endpoint to trigger scraping of Vivid Racing products
 
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
