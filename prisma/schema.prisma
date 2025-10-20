@@ -9,20 +9,21 @@ datasource db {
 }
 
 model Category {
-  id            String            @id @default(cuid())
-  title         String
-  slug          String            @unique
-  parentId      String?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  description   String?
-  image         String?
-  lastSyncedAt  DateTime?
-  shopifyHandle String?           @db.VarChar(191)
-  shopifyPageId String?           @db.VarChar(191)
-  parent        Category?         @relation("ParentChild", fields: [parentId], references: [id])
-  children      Category[]        @relation("ParentChild")
-  products      ProductCategory[]
+  id                    String                @id @default(cuid())
+  title                 String
+  slug                  String                @unique
+  parentId              String?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  image                 String?
+  description           String?
+  lastSyncedAt          DateTime?
+  shopifyHandle         String?               @db.VarChar(191)
+  shopifyPageId         String?               @db.VarChar(191)
+  parent                Category?             @relation("ParentChild", fields: [parentId], references: [id])
+  children              Category[]            @relation("ParentChild")
+  distributorCategories DistributorCategory[]
+  products              ProductCategory[]
 
   @@index([shopifyHandle])
   @@index([shopifyPageId])
@@ -68,6 +69,57 @@ model FitTerm {
   @@unique([type, name, parentId])
   @@index([type])
   @@index([parentId])
+}
+
+model Distributor {
+  id         String                @id @default(cuid())
+  name       String                @unique
+  code       String                @unique
+  baseUrl    String?
+  isActive   Boolean               @default(true)
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
+  categories DistributorCategory[]
+  products   DistributorProduct[]
+}
+
+model DistributorCategory {
+  id              String      @id @default(cuid())
+  distributorId   String
+  distributorPath String
+  distributorName String
+  categoryId      String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  category        Category?   @relation(fields: [categoryId], references: [id])
+  distributor     Distributor @relation(fields: [distributorId], references: [id], onDelete: Cascade)
+
+  @@unique([distributorId, distributorPath])
+  @@index([distributorId])
+  @@index([categoryId])
+}
+
+model DistributorProduct {
+  id                String      @id @default(cuid())
+  distributorId     String
+  distributorSku    String
+  distributorUrl    String
+  title             String
+  description       String?
+  price             Decimal?    @db.Decimal(10, 2)
+  imageUrl          String?
+  shopifyProductGid String?
+  importedAt        DateTime?
+  lastScrapedAt     DateTime    @default(now())
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  rawData           Json?
+  distributor       Distributor @relation(fields: [distributorId], references: [id], onDelete: Cascade)
+
+  @@unique([distributorId, distributorSku])
+  @@index([distributorId])
+  @@index([shopifyProductGid])
+  @@index([importedAt])
 }
 
 enum FitTermType {

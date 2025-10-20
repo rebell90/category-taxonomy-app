@@ -32,6 +32,13 @@ export default function DashboardHome() {
           </p>
         </a>
 
+        <a href="/dashboard/distributors" className="block border rounded-lg p-5 hover:shadow">
+          <div className="text-lg text-gray-600 font-semibold">Distributor Import</div>
+          <p className="text-sm text-gray-600 mt-1">
+            Distributer Import
+          </p>
+        </a>
+        
       </div>
     </div>
   );

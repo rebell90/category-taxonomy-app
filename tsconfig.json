@@ -15,8 +15,10 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "jsx": "react-jsx",
-    "types": ["react"],
+    "jsx": "preserve",
+    "types": [
+      "react"
+    ],
     "incremental": true,
     "plugins": [
       {
