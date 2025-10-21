@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { shopifyAdminGraphQL } from '@/lib/shopify';
+import { generateProductDescription } from '@/lib/ai-description-generator';
 
 interface ShopifyProductCreateResponse {
   productCreate: {

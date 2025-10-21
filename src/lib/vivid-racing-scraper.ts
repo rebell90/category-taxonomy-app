@@ -68,10 +68,33 @@ export class VividRacingScraper {
                          $('meta[property="og:description"]').attr('content')?.trim() || 
                          '';
 
-      // Extract image
-      const imageUrl = $('meta[property="og:image"]').attr('content') || 
-                      $('.product-image img').first().attr('src') || 
-                      null;
+      // Extract image - try multiple selectors
+      let imageUrl = null;
+      
+      // Try og:image meta tag first
+      const ogImage = $('meta[property="og:image"]').attr('content');
+      if (ogImage) {
+        imageUrl = ogImage;
+      }
+      
+      // Try to find the main product image
+      if (!imageUrl) {
+        const imgSrc = $('img[alt*="' + sku + '"]').first().attr('src');
+        if (imgSrc) {
+          imageUrl = imgSrc.startsWith('http') ? imgSrc : `${this.config.baseUrl}${imgSrc}`;
+        }
+      }
+      
+      // Fallback to any image with the SKU in the URL
+      if (!imageUrl) {
+        $('img').each((_, img) => {
+          const src = $(img).attr('src');
+          if (src && (src.includes(sku) || src.includes('cdn.vividracing'))) {
+            imageUrl = src.startsWith('http') ? src : `${this.config.baseUrl}${src}`;
+            return false; // break
+          }
+        });
+      }
 
       // Extract price (you'll need to adjust selector based on actual page structure)
       let price: number | null = null;
@@ -92,7 +115,6 @@ export class VividRacingScraper {
         if (cells.length >= 2) {
           const makeModel = $(cells[0]).text().trim();
           const modelText = $(cells[1]).text().trim();
-          const yearText = $(cells[2]).text().trim();
 
           // Parse "1990-1997 Mazda Miata"
           const makeModelMatch = makeModel.match(/(\d{4})-(\d{4})\s+(\w+)\s+(.+)/);
