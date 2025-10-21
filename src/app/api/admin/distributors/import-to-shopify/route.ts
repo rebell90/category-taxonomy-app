@@ -110,14 +110,26 @@ export async function POST(req: NextRequest) {
         }
 
         // Add fitment data if available
-        if (rawData?.make && rawData?.model) {
+        if (
+          rawData &&
+          typeof rawData === 'object' &&
+          'make' in rawData &&
+          typeof rawData.make === 'string' &&
+          'model' in rawData &&
+          typeof rawData.model === 'string'
+        ) {
+          const make = rawData.make as string;
+          const model = rawData.model as string;
+          const yearFrom = 'yearFrom' in rawData && typeof rawData.yearFrom === 'number' ? rawData.yearFrom : undefined;
+          const yearTo = 'yearTo' in rawData && typeof rawData.yearTo === 'number' ? rawData.yearTo : undefined;
+          
           await prisma.productFitment.create({
             data: {
               productGid: shopifyProductGid,
-              make: rawData.make,
-              model: rawData.model,
-              yearFrom: rawData.yearFrom,
-              yearTo: rawData.yearTo,
+              make,
+              model,
+              yearFrom,
+              yearTo,
             },
           });
         }
