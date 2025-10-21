@@ -267,8 +267,8 @@ export default function DistributorsPage() {
     setSelectedProducts(new Set(unimportedProducts.map(p => p.id)));
   }
 
-  function renderCategoryOptions(categories: Category[], depth = 0): JSX.Element[] {
-    const options: JSX.Element[] = [];
+  function renderCategoryOptions(categories: Category[], depth = 0): React.ReactElement[] {
+    const options: React.ReactElement[] = [];
     
     categories.forEach(cat => {
       const prefix = '—'.repeat(depth);
@@ -336,7 +336,7 @@ export default function DistributorsPage() {
           <div className="bg-white p-6 rounded-lg shadow">
             <h2 className="text-xl font-semibold mb-4">Step 1: Scrape Categories</h2>
             <p className="text-gray-600 mb-4">
-              First, scrape all categories from Vivid Racing to see what&apos;s available.
+              First, scrape all categories from Vivid Racing to see what's available.
             </p>
             <button
               onClick={scrapeCategories}
