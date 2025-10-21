@@ -3,7 +3,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { Prisma } from '@prisma/client';
 import { VividRacingScraper } from '@/lib/vivid-racing-scraper';
+
 
 export async function POST(req: NextRequest) {
   try {
@@ -84,7 +86,7 @@ export async function POST(req: NextRequest) {
             imageUrl: prod.imageUrl,
             distributorUrl: prod.url,
             lastScrapedAt: new Date(),
-            rawData: prod as unknown,
+            rawData: prod as unknown as Prisma.InputJsonValue,
           },
           create: {
             distributorId: distributor.id,
@@ -94,7 +96,7 @@ export async function POST(req: NextRequest) {
             price: prod.price,
             imageUrl: prod.imageUrl,
             distributorUrl: prod.url,
-            rawData: prod as any,
+            rawData: prod as unknown as Prisma.InputJsonValue,
           },
         });
         saved++;
@@ -133,7 +135,7 @@ export async function POST(req: NextRequest) {
           imageUrl: product.imageUrl,
           distributorUrl: product.url,
           lastScrapedAt: new Date(),
-          rawData: product as any,
+          rawData: product as unknown as Prisma.InputJsonValue,
         },
         create: {
           distributorId: distributor.id,
@@ -143,7 +145,7 @@ export async function POST(req: NextRequest) {
           price: product.price,
           imageUrl: product.imageUrl,
           distributorUrl: product.url,
-          rawData: product as any,
+          rawData: product as unknown as Prisma.InputJsonValue,
         },
       });
 
