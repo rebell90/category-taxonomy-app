@@ -110,7 +110,7 @@ export class VividRacingScraper {
 
       // Extract category from breadcrumbs or URL
       let categoryPath = '';
-      let categoryName = '';
+      const categoryName = '';
       const categoryMatch = url.match(/-c-(\d+)\.html/);
       if (categoryMatch) {
         categoryPath = categoryMatch[1];
