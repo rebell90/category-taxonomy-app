@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
             imageUrl: prod.imageUrl,
             distributorUrl: prod.url,
             lastScrapedAt: new Date(),
-            rawData: prod as any,
+            rawData: prod as unknown,
           },
           create: {
             distributorId: distributor.id,

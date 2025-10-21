@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
         });
 
         // Link to categories based on distributor category mapping
-        const rawData = product.rawData as any;
+        const rawData = product.rawData as Record<string, unknown> | null;
         if (rawData?.categoryPath) {
           const distCat = await prisma.distributorCategory.findFirst({
             where: {
