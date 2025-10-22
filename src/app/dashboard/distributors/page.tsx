@@ -36,6 +36,7 @@ interface Category {
 export default function DistributorsPage() {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'scrape' | 'categories' | 'products'>('scrape');
+  const [testProduct, setTestProduct] = useState<DistributorProduct | null>(null);
   
   // Categories state
   const [distributorCategories, setDistributorCategories] = useState<DistributorCategory[]>([]);
@@ -336,7 +337,7 @@ export default function DistributorsPage() {
           <div className="bg-white p-6 rounded-lg shadow">
             <h2 className="text-xl font-semibold mb-4">Step 1: Scrape Categories</h2>
             <p className="text-gray-600 mb-4">
-              First, scrape all categories from Vivid Racing to see what&apos;s available.
+              First, scrape all categories from Vivid Racing to see what's available.
             </p>
             <button
               onClick={scrapeCategories}

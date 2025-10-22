@@ -63,10 +63,36 @@ export class VividRacingScraper {
                     $('meta[property="og:title"]').attr('content')?.trim() || 
                     '';
 
-      // Extract description
-      const description = $('meta[name="description"]').attr('content')?.trim() || 
-                         $('meta[property="og:description"]').attr('content')?.trim() || 
-                         '';
+      // Extract description - get ALL the content sections
+      let description = '';
+      
+      // Get the main content area (everything between title and footer)
+      const contentSections: string[] = [];
+      
+      // Try to find main product description paragraphs
+      $('p, h2, h3, ul, ol').each((_, elem) => {
+        const text = $(elem).text().trim();
+        // Skip footer/legal stuff
+        if (text && 
+            !text.includes('Complete a the') && 
+            !text.includes('Vivid Racing Return Form') &&
+            !text.includes('warranty') &&
+            text.length > 20) {
+          const tagName = $(elem).prop('tagName')?.toLowerCase();
+          if (tagName === 'h2' || tagName === 'h3') {
+            contentSections.push(`\n## ${text}\n`);
+          } else if (tagName === 'ul' || tagName === 'ol') {
+            const listItems = $(elem).find('li').map((_, li) => `- ${$(li).text().trim()}`).get();
+            if (listItems.length > 0) {
+              contentSections.push(listItems.join('\n'));
+            }
+          } else {
+            contentSections.push(text);
+          }
+        }
+      });
+      
+      description = contentSections.join('\n\n').substring(0, 5000); // Limit to 5000 chars
 
       // Extract image - try multiple selectors
       let imageUrl = null;
@@ -96,12 +122,43 @@ export class VividRacingScraper {
         });
       }
 
-      // Extract price (you'll need to adjust selector based on actual page structure)
+      // Extract price - try multiple approaches
       let price: number | null = null;
-      const priceText = $('.product-price, .price, [itemprop="price"]').first().text();
-      const priceMatch = priceText.match(/\$?([\d,]+\.?\d*)/);
-      if (priceMatch) {
-        price = parseFloat(priceMatch[1].replace(',', ''));
+      
+      // Try to find price in various locations
+      const priceSelectors = [
+        '.product-price',
+        '.price',
+        '[itemprop="price"]',
+        '.price-value',
+        '#product-price',
+        'span:contains("$")',
+      ];
+      
+      for (const selector of priceSelectors) {
+        const priceText = $(selector).first().text();
+        if (priceText) {
+          const priceMatch = priceText.match(/\$?\s*([\d,]+\.?\d*)/);
+          if (priceMatch) {
+            price = parseFloat(priceMatch[1].replace(',', ''));
+            if (price > 0) break;
+          }
+        }
+      }
+      
+      // Try schema.org structured data
+      if (!price || price === 0) {
+        const schemaScript = $('script[type="application/ld+json"]').html();
+        if (schemaScript) {
+          try {
+            const schema = JSON.parse(schemaScript);
+            if (schema.offers && schema.offers.price) {
+              price = parseFloat(schema.offers.price);
+            }
+          } catch {
+            // ignore JSON parse errors
+          }
+        }
       }
 
       // Extract fitment data from table

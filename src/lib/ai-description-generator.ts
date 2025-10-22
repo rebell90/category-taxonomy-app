@@ -49,15 +49,15 @@ export async function generateProductDescription(product: ProductInfo): Promise<
 }
 
 function buildPrompt(product: ProductInfo): string {
-  let prompt = `Write a compelling, SEO-friendly product description for an automotive performance part. 
+  let prompt = `You are writing a product description for a performance automotive parts e-commerce store. Take the distributor's description and rewrite it to be more compelling and SEO-friendly for our customers.
 
-Product: ${product.title}`;
+Product Title: ${product.title}`;
 
   if (product.make && product.model) {
     const yearRange = product.yearFrom && product.yearTo 
       ? `${product.yearFrom}-${product.yearTo}` 
       : product.yearFrom || '';
-    prompt += `\nFitment: ${yearRange} ${product.make} ${product.model}`;
+    prompt += `\nVehicle Fitment: ${yearRange} ${product.make} ${product.model}`;
   }
 
   if (product.partNumber) {
@@ -68,23 +68,32 @@ Product: ${product.title}`;
     prompt += `\nCategory: ${product.category}`;
   }
 
-  if (product.originalDescription) {
-    prompt += `\n\nOriginal description for reference:\n${product.originalDescription.substring(0, 500)}`;
-  }
+  prompt += `\n\nDISTRIBUTOR'S ORIGINAL DESCRIPTION:\n${product.originalDescription || 'No description provided'}`;
 
   prompt += `
 
-Requirements:
-- Write 2-3 paragraphs (150-250 words)
-- Focus on benefits and features
-- Use professional, enthusiastic tone
-- Include key specifications if mentioned
-- Make it SEO-friendly with natural keyword usage
-- Don't use overly salesy language
-- Don't mention pricing, shipping, or returns
-- Write in HTML format with <p> tags
+INSTRUCTIONS:
+1. Rewrite the description to be clear, compelling, and SEO-friendly
+2. Keep ALL important technical specifications and features
+3. Keep the brand name (like Duraflex, etc.) and part numbers
+4. Remove any shipping, return policy, or warranty information
+5. Remove any legal disclaimers or warnings
+6. Make it 2-4 paragraphs (200-350 words)
+7. Use an enthusiastic but professional tone
+8. Focus on benefits and performance improvements
+9. Include bullet points for key specifications if present in original
+10. Format in clean HTML with <p> tags and <ul>/<li> for lists
 
-Return ONLY the HTML description, no other text.`;
+EXAMPLE STRUCTURE:
+<p>[Opening paragraph highlighting the main benefit and what makes this part special]</p>
+<p>[Technical details and specifications paragraph]</p>
+<ul>
+<li>[Key spec 1]</li>
+<li>[Key spec 2]</li>
+</ul>
+<p>[Closing paragraph about quality and why to choose this part]</p>
+
+Return ONLY the HTML description with no additional text or explanation.`;
 
   return prompt;
 }
