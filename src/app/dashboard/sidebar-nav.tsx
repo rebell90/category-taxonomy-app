@@ -10,6 +10,7 @@ const links = [
   { href: '/dashboard/categories', label: 'Manage Category Tree' },
   { href: '/dashboard/fit-terms', label: 'Fitment Terms' },
   { href: '/dashboard/fitments-audit', label: 'Assign Fitments' },
+  { href: '/dashboard/distributors', label: 'Distributor Import' },
 ]
 
 export function SidebarNav() {

@@ -19,6 +19,7 @@ interface DistributorProduct {
   id: string;
   distributorSku: string;
   title: string;
+  description: string | null;
   price: number | null;
   imageUrl: string | null;
   shopifyProductGid: string | null;
@@ -165,6 +166,7 @@ export default function DistributorsPage() {
     if (!url) return;
 
     setLoading(true);
+    setTestProduct(null);
     try {
       const res = await fetch('/api/admin/distributors/scrape', {
         method: 'POST',
@@ -176,8 +178,20 @@ export default function DistributorsPage() {
       });
       const data = await res.json();
       
-      if (data.success) {
-        alert('Success! Product scraped');
+      if (data.success && data.product) {
+        alert('Success! Product scraped - see preview below');
+        // Show the scraped product
+        setTestProduct({
+          id: 'preview',
+          distributorSku: data.product.sku,
+          title: data.product.title,
+          description: data.product.description,
+          price: data.product.price,
+          imageUrl: data.product.imageUrl,
+          distributorUrl: data.product.url,
+          shopifyProductGid: null,
+          importedAt: null,
+        });
         if (activeTab === 'products') loadProducts();
       } else {
         alert('Failed to scrape product');
@@ -363,17 +377,57 @@ export default function DistributorsPage() {
           </div>
 
           <div className="bg-white p-6 rounded-lg shadow">
-            <h2 className="text-xl font-semibold mb-4">Scrape Single Product</h2>
+            <h2 className="text-xl font-semibold mb-4">Test Single Product Scraper</h2>
             <p className="text-gray-600 mb-4">
-              Test scraping on a single product URL.
+              Test the scraper on a single product URL to see what data gets extracted.
             </p>
             <button
               onClick={scrapeProduct}
               disabled={loading}
               className="bg-gray-600 text-white px-6 py-2 rounded hover:bg-gray-700 disabled:opacity-50"
             >
-              Scrape Single Product
+              Test Scrape Single Product
             </button>
+            
+            {testProduct && (
+              <div className="mt-6 p-4 border rounded-lg bg-gray-50">
+                <h3 className="font-semibold text-lg mb-2">Scraped Preview:</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Title:</p>
+                    <p className="text-sm">{testProduct.title}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">SKU:</p>
+                    <p className="text-sm">{testProduct.distributorSku}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Price:</p>
+                    <p className="text-sm">${testProduct.price || 'Not found'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Image:</p>
+                    {testProduct.imageUrl ? (
+                      <img src={testProduct.imageUrl} alt={testProduct.title} className="w-20 h-20 object-cover" />
+                    ) : (
+                      <p className="text-sm text-red-500">Not found</p>
+                    )}
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-sm font-medium text-gray-500 mb-1">Description Length:</p>
+                    <p className="text-sm">{testProduct.description?.length || 0} characters</p>
+                  </div>
+                  <div className="col-span-2">
+                    <details className="text-sm">
+                      <summary className="font-medium text-gray-500 cursor-pointer">Full Description (click to expand)</summary>
+                      <div className="mt-2 p-2 bg-white border rounded max-h-96 overflow-y-auto">
+                        <pre className="text-xs whitespace-pre-wrap">{testProduct.description}</pre>
+                      </div>
+                    </details>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

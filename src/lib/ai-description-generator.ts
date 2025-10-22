@@ -25,7 +25,8 @@ export async function generateProductDescription(product: ProductInfo): Promise<
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 500,
+        max_tokens: 1000,
+        temperature: 0.7,
         messages: [
           {
             role: 'user',

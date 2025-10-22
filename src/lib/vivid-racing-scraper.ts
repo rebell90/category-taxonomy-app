@@ -63,36 +63,83 @@ export class VividRacingScraper {
                     $('meta[property="og:title"]').attr('content')?.trim() || 
                     '';
 
-      // Extract description - get ALL the content sections
+      // Extract description - get the ACTUAL product description content
       let description = '';
-      
-      // Get the main content area (everything between title and footer)
       const contentSections: string[] = [];
       
-      // Try to find main product description paragraphs
-      $('p, h2, h3, ul, ol').each((_, elem) => {
-        const text = $(elem).text().trim();
-        // Skip footer/legal stuff
-        if (text && 
-            !text.includes('Complete a the') && 
-            !text.includes('Vivid Racing Return Form') &&
-            !text.includes('warranty') &&
-            text.length > 20) {
-          const tagName = $(elem).prop('tagName')?.toLowerCase();
-          if (tagName === 'h2' || tagName === 'h3') {
-            contentSections.push(`\n## ${text}\n`);
-          } else if (tagName === 'ul' || tagName === 'ol') {
-            const listItems = $(elem).find('li').map((_, li) => `- ${$(li).text().trim()}`).get();
-            if (listItems.length > 0) {
-              contentSections.push(listItems.join('\n'));
-            }
-          } else {
-            contentSections.push(text);
+      // Strategy: Look for the main product content area
+      // Vivid Racing typically has product description in specific divs
+      
+      // Try to find main product description container
+      const descriptionContainers = [
+        '.product-description',
+        '.product-details',
+        '#product-description',
+        '.description',
+        '[itemprop="description"]',
+      ];
+      
+      let foundMainContent = false;
+      for (const selector of descriptionContainers) {
+        const container = $(selector);
+        if (container.length > 0) {
+          const html = container.html();
+          if (html && html.length > 100) {
+            description = html;
+            foundMainContent = true;
+            break;
           }
         }
-      });
+      }
       
-      description = contentSections.join('\n\n').substring(0, 5000); // Limit to 5000 chars
+      // If no dedicated description container, extract ALL meaningful content
+      if (!foundMainContent) {
+        // Get everything from the body, but skip navigation/header/footer
+        $('body').find('h1, h2, h3, h4, p, ul, ol').each((_, elem) => {
+          const $elem = $(elem);
+          const text = $elem.text().trim();
+          
+          // Skip if it's in navigation, header, footer, or sidebar
+          const parents = $elem.parents().map((_, p) => $(p).attr('class') || '').get().join(' ');
+          if (parents.includes('nav') || parents.includes('header') || 
+              parents.includes('footer') || parents.includes('sidebar')) {
+            return;
+          }
+          
+          // Skip legal/policy content
+          if (text.includes('Complete a the') || 
+              text.includes('Vivid Racing Return') ||
+              text.includes('Shipping Claim') ||
+              text.includes('warranty claim') ||
+              text.length < 30) {
+            return;
+          }
+          
+          const tagName = $elem.prop('tagName')?.toLowerCase();
+          
+          // Get the outer HTML to preserve formatting
+          if (tagName === 'h1' || tagName === 'h2' || tagName === 'h3' || tagName === 'h4') {
+            contentSections.push(`<${tagName}>${text}</${tagName}>`);
+          } else if (tagName === 'ul' || tagName === 'ol') {
+            const listHtml = $elem.html();
+            if (listHtml) {
+              contentSections.push(`<${tagName}>${listHtml}</${tagName}>`);
+            }
+          } else if (tagName === 'p') {
+            contentSections.push(`<p>${text}</p>`);
+          }
+        });
+        
+        description = contentSections.join('\n');
+      }
+      
+      // Clean up the description
+      description = description
+        .replace(/<script[^>]*>.*?<\/script>/gi, '')
+        .replace(/<style[^>]*>.*?<\/style>/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .substring(0, 8000); // Increase limit to 8000 chars
 
       // Extract image - try multiple selectors
       let imageUrl = null;
