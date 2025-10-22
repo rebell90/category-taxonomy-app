@@ -63,107 +63,82 @@ export class VividRacingScraper {
                     $('meta[property="og:title"]').attr('content')?.trim() || 
                     '';
 
-      // Extract description - get the ACTUAL product description content
+      // Extract description - ONLY get the actual product description content
       let description = '';
-      const contentSections: string[] = [];
       
-      // Strategy: Look for the main product content area
-      // Vivid Racing typically has product description in specific divs
+      // Look for the main product title and everything after it until we hit legal/footer content
+      let captureMode = false;
+      const relevantSections: string[] = [];
       
-      // Try to find main product description container
-      const descriptionContainers = [
-        '.product-description',
-        '.product-details',
-        '#product-description',
-        '.description',
-        '[itemprop="description"]',
-      ];
-      
-      let foundMainContent = false;
-      for (const selector of descriptionContainers) {
-        const container = $(selector);
-        if (container.length > 0) {
-          const html = container.html();
-          if (html && html.length > 100) {
-            description = html;
-            foundMainContent = true;
-            break;
+      // Find where the actual product content starts (after the product title with part number)
+      $('body').find('h1, h2, h3, h4, p, ul').each((_, elem) => {
+        const $elem = $(elem);
+        const text = $elem.text().trim();
+        
+        // Start capturing after we see the product title with part number
+        if (!captureMode && text.includes(sku) && text.includes(title.substring(0, 20))) {
+          captureMode = true;
+          return; // Skip the title itself
+        }
+        
+        // Stop capturing when we hit legal/policy sections
+        if (captureMode) {
+          if (text.includes('Notes:') || 
+              text.includes('Due to the nature') ||
+              text.includes('Complete a the') ||
+              text.includes('WARNING') ||
+              text.includes('Make Vehicle') ||
+              text.includes('Check out these other') ||
+              text.toLowerCase().includes('warranty') ||
+              text.toLowerCase().includes('return') && text.length > 100) {
+            return false; // Stop completely
+          }
+          
+          // Capture meaningful content
+          if (text.length > 20) {
+            const tagName = $elem.prop('tagName')?.toLowerCase();
+            const html = $elem.html()?.trim();
+            
+            if (html && (tagName === 'h2' || tagName === 'h3' || tagName === 'h4')) {
+              relevantSections.push(`<${tagName}>${text}</${tagName}>`);
+            } else if (html && (tagName === 'ul' || tagName === 'ol')) {
+              relevantSections.push(`<${tagName}>${html}</${tagName}>`);
+            } else if (tagName === 'p') {
+              relevantSections.push(`<p>${text}</p>`);
+            }
           }
         }
-      }
+      });
       
-      // If no dedicated description container, extract ALL meaningful content
-      if (!foundMainContent) {
-        // Get everything from the body, but skip navigation/header/footer
-        $('body').find('h1, h2, h3, h4, p, ul, ol').each((_, elem) => {
-          const $elem = $(elem);
-          const text = $elem.text().trim();
-          
-          // Skip if it's in navigation, header, footer, or sidebar
-          const parents = $elem.parents().map((_, p) => $(p).attr('class') || '').get().join(' ');
-          if (parents.includes('nav') || parents.includes('header') || 
-              parents.includes('footer') || parents.includes('sidebar')) {
-            return;
-          }
-          
-          // Skip legal/policy content
-          if (text.includes('Complete a the') || 
-              text.includes('Vivid Racing Return') ||
-              text.includes('Shipping Claim') ||
-              text.includes('warranty claim') ||
-              text.length < 30) {
-            return;
-          }
-          
-          const tagName = $elem.prop('tagName')?.toLowerCase();
-          
-          // Get the outer HTML to preserve formatting
-          if (tagName === 'h1' || tagName === 'h2' || tagName === 'h3' || tagName === 'h4') {
-            contentSections.push(`<${tagName}>${text}</${tagName}>`);
-          } else if (tagName === 'ul' || tagName === 'ol') {
-            const listHtml = $elem.html();
-            if (listHtml) {
-              contentSections.push(`<${tagName}>${listHtml}</${tagName}>`);
-            }
-          } else if (tagName === 'p') {
-            contentSections.push(`<p>${text}</p>`);
-          }
-        });
-        
-        description = contentSections.join('\n');
-      }
-      
-      // Clean up the description
-      description = description
-        .replace(/<script[^>]*>.*?<\/script>/gi, '')
-        .replace(/<style[^>]*>.*?<\/style>/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .substring(0, 8000); // Increase limit to 8000 chars
+      description = relevantSections.join('\n').substring(0, 8000);
 
-      // Extract image - try multiple selectors
+      // Extract image - prioritize high-quality product images
       let imageUrl = null;
       
-      // Try og:image meta tag first
-      const ogImage = $('meta[property="og:image"]').attr('content');
-      if (ogImage) {
-        imageUrl = ogImage;
-      }
+      // Priority 1: Look for images from their CDN with the SKU
+      $('img').each((_, img) => {
+        const src = $(img).attr('src');
+        if (src && src.includes('cdn.vividracing.com') && src.includes(sku)) {
+          // Get the highest quality version by removing size parameters
+          imageUrl = src.split('?')[0]; // Remove query params for full size
+          return false; // break
+        }
+      });
       
-      // Try to find the main product image
+      // Priority 2: og:image meta tag
       if (!imageUrl) {
-        const imgSrc = $('img[alt*="' + sku + '"]').first().attr('src');
-        if (imgSrc) {
-          imageUrl = imgSrc.startsWith('http') ? imgSrc : `${this.config.baseUrl}${imgSrc}`;
+        const ogImage = $('meta[property="og:image"]').attr('content');
+        if (ogImage && ogImage.includes('cdn.vividracing.com')) {
+          imageUrl = ogImage;
         }
       }
       
-      // Fallback to any image with the SKU in the URL
+      // Priority 3: Any CDN image
       if (!imageUrl) {
         $('img').each((_, img) => {
           const src = $(img).attr('src');
-          if (src && (src.includes(sku) || src.includes('cdn.vividracing'))) {
-            imageUrl = src.startsWith('http') ? src : `${this.config.baseUrl}${src}`;
+          if (src && src.includes('cdn.vividracing.com')) {
+            imageUrl = src.startsWith('http') ? src : `https:${src}`;
             return false; // break
           }
         });
