@@ -22,6 +22,8 @@ type Category = {
 
 type FlatCategory = { id: string; slug: string; label: string; depth: number }
 
+type SortOption = 'UPDATED_AT_DESC' | 'UPDATED_AT_ASC' | 'TITLE_ASC' | 'TITLE_DESC'
+
 export default function AuditPage() {
   const [items, setItems] = useState<AuditItem[]>([])
   const [cursor, setCursor] = useState<string | null>(null)
@@ -29,6 +31,7 @@ export default function AuditPage() {
   const [loading, setLoading] = useState(false)
   const [onlyUnassigned, setOnlyUnassigned] = useState(false)
   const [q, setQ] = useState('')
+  const [sortBy, setSortBy] = useState<SortOption>('UPDATED_AT_DESC') // Default: Last edited descending
   const [cats, setCats] = useState<FlatCategory[]>([])
   const [selectedCatIdByProduct, setSelectedCatIdByProduct] = useState<Record<string, string>>({})
   const [replaceExistingByProduct, setReplaceExistingByProduct] = useState<Record<string, boolean>>({})
@@ -41,6 +44,7 @@ export default function AuditPage() {
       const url = new URL('/api/admin/products-audit', window.location.origin)
       if (!reset && cursor) url.searchParams.set('cursor', cursor)
       url.searchParams.set('limit', '50')
+      url.searchParams.set('sortBy', sortBy) // Pass sort parameter
 
       const res = await fetch(url.toString(), { cache: 'no-store' })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -82,6 +86,13 @@ export default function AuditPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Reload when sort changes
+  useEffect(() => {
+    setCursor(null)
+    load(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortBy])
+
   const filtered = useMemo(() => {
     let rows = items
     if (onlyUnassigned) rows = rows.filter(r => r.slugs.length === 0)
@@ -111,8 +122,6 @@ export default function AuditPage() {
     const replaceExisting = !!replaceExistingByProduct[product.id]
     setAssigningId(product.id)
     try {
-      // Send exactly what your API expects now:
-      // { productGid, categoryId, replaceExisting }
       const res = await fetch('/api/product-categories', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -127,7 +136,6 @@ export default function AuditPage() {
         throw new Error(`Assign failed: ${t}`)
       }
 
-      // Optimistically update the row’s slugs (so UI reflects the change)
       const chosen = cats.find(c => c.id === categoryId)
       setItems(prev =>
         prev.map(it =>
@@ -149,60 +157,58 @@ export default function AuditPage() {
     }
   }
 
-// Added 9.14.25 to allow for deleting a slug assignment from a product
-const [unassigningKey, setUnassigningKey] = useState<string | null>(null);
+  const [unassigningKey, setUnassigningKey] = useState<string | null>(null);
 
-async function handleUnassign(product: AuditItem, slug: string) {
-  setUnassigningKey(`${product.id}:${slug}`);
-  try {
-    const res = await fetch('/api/product-categories', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ productGid: product.id, slug }),
-    });
-    if (!res.ok) {
-      const t = await res.text();
-      throw new Error(`Unassign failed: ${t}`);
+  async function handleUnassign(product: AuditItem, slug: string) {
+    setUnassigningKey(`${product.id}:${slug}`);
+    try {
+      const res = await fetch('/api/product-categories', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productGid: product.id, slug }),
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(`Unassign failed: ${t}`);
+      }
+      setItems(prev =>
+        prev.map(it =>
+          it.id === product.id
+            ? { ...it, slugs: it.slugs.filter(s => s !== slug) }
+            : it
+        )
+      );
+    } catch (e) {
+      console.error(e);
+      alert((e as Error).message || 'Failed to unassign category');
+    } finally {
+      setUnassigningKey(null);
     }
-    // UPDATE UI
-    setItems(prev =>
-      prev.map(it =>
-        it.id === product.id
-          ? { ...it, slugs: it.slugs.filter(s => s !== slug) }
-          : it
-      )
-    );
-  } catch (e) {
-    console.error(e);
-    alert((e as Error).message || 'Failed to unassign category');
-  } finally {
-    setUnassigningKey(null);
   }
-}
 
-async function handleUnassignAll(product: AuditItem) {
-  if (!confirm('Remove all category assignments for this product?')) return;
-  setUnassigningKey(`${product.id}:ALL`);
-  try {
-    const res = await fetch('/api/product-categories', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ productGid: product.id, all: true }),
-    });
-    if (!res.ok) {
-      const t = await res.text();
-      throw new Error(`Unassign-all failed: ${t}`);
+  async function handleUnassignAll(product: AuditItem) {
+    if (!confirm('Remove all category assignments for this product?')) return;
+    setUnassigningKey(`${product.id}:ALL`);
+    try {
+      const res = await fetch('/api/product-categories', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productGid: product.id, all: true }),
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(`Unassign-all failed: ${t}`);
+      }
+      setItems(prev =>
+        prev.map(it => (it.id === product.id ? { ...it, slugs: [] } : it))
+      );
+    } catch (e) {
+      console.error(e);
+      alert((e as Error).message || 'Failed to unassign all categories');
+    } finally {
+      setUnassigningKey(null);
     }
-    setItems(prev =>
-      prev.map(it => (it.id === product.id ? { ...it, slugs: [] } : it))
-    );
-  } catch (e) {
-    console.error(e);
-    alert((e as Error).message || 'Failed to unassign all categories');
-  } finally {
-    setUnassigningKey(null);
   }
-}
 
   return (
     <main className="p-8 space-y-6">
@@ -212,6 +218,18 @@ async function handleUnassignAll(product: AuditItem) {
           <p className="text-slate-700 text-sm">Assign categories inline or filter to find unassigned products.</p>
         </div>
         <div className="flex items-center gap-3">
+          {/* SORTING DROPDOWN - NEW */}
+          <select
+            className="border border-slate-300 rounded px-3 py-2 text-sm text-slate-900 bg-white"
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value as SortOption)}
+          >
+            <option value="UPDATED_AT_DESC">Last Edited (Newest First)</option>
+            <option value="UPDATED_AT_ASC">Last Edited (Oldest First)</option>
+            <option value="TITLE_ASC">Alphabetical (A-Z)</option>
+            <option value="TITLE_DESC">Alphabetical (Z-A)</option>
+          </select>
+
           <label className="inline-flex items-center gap-2 text-sm text-slate-800">
             <input
               type="checkbox"
@@ -298,7 +316,6 @@ async function handleUnassignAll(product: AuditItem) {
 
                 <td className="p-3 align-top">
                   <div className="flex flex-col gap-2">
-                    {/* Category dropdown (uses categoryId as the value) */}
                     <select
                       className="border border-slate-300 rounded px-2 py-1 text-slate-900"
                       value={selectedCatIdByProduct[r.id] || ''}
@@ -314,7 +331,6 @@ async function handleUnassignAll(product: AuditItem) {
                       ))}
                     </select>
 
-                    {/* Replace existing or append */}
                     <label className="inline-flex items-center gap-2 text-xs text-slate-800">
                       <input
                         type="checkbox"

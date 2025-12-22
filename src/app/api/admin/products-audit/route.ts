@@ -29,16 +29,36 @@ export function OPTIONS() {
   return new Response(null, { headers: cors })
 }
 
-// GET /api/admin/products-audit?cursor=<cursor>&limit=50
+// Helper to parse sortBy parameter
+function parseSortParams(sortBy?: string | null): { sortKey: string; reverse: boolean } {
+  switch (sortBy) {
+    case 'UPDATED_AT_DESC':
+      return { sortKey: 'UPDATED_AT', reverse: true }
+    case 'UPDATED_AT_ASC':
+      return { sortKey: 'UPDATED_AT', reverse: false }
+    case 'TITLE_ASC':
+      return { sortKey: 'TITLE', reverse: false }
+    case 'TITLE_DESC':
+      return { sortKey: 'TITLE', reverse: true }
+    default:
+      // Default: Last edited (newest first)
+      return { sortKey: 'UPDATED_AT', reverse: true }
+  }
+}
+
+// GET /api/admin/products-audit?cursor=<cursor>&limit=50&sortBy=<sortBy>
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
     const after = searchParams.get('cursor')
     const limit = Math.min(parseInt(searchParams.get('limit') ?? '50', 10) || 50, 250)
+    const sortBy = searchParams.get('sortBy')
+    
+    const { sortKey, reverse } = parseSortParams(sortBy)
 
     const GQL = /* GraphQL */ `
-      query ProductsAudit($first: Int!, $after: String) {
-        products(first: $first, after: $after, sortKey: TITLE) {
+      query ProductsAudit($first: Int!, $after: String, $sortKey: ProductSortKeys!, $reverse: Boolean!) {
+        products(first: $first, after: $after, sortKey: $sortKey, reverse: $reverse) {
           edges {
             node {
               id
@@ -55,7 +75,13 @@ export async function GET(req: NextRequest) {
       }
     `
 
-    const data = await shopifyAdminGraphQL<ProductsResp>(GQL, { first: limit, after })
+    const data = await shopifyAdminGraphQL<ProductsResp>(GQL, { 
+      first: limit, 
+      after,
+      sortKey,
+      reverse
+    })
+    
     const conn = data.products
     const items = conn.edges.map(e => {
       const n = e.node
