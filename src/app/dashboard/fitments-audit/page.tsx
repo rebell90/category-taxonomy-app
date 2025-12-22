@@ -44,6 +44,8 @@ type FitmentsResp = {
   items?: Fitment[];      // tolerate alternate shape
 };
 
+type SortOption = 'UPDATED_AT_DESC' | 'UPDATED_AT_ASC' | 'TITLE_ASC' | 'TITLE_DESC';
+
 function classNames(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(' ');
 }
@@ -54,6 +56,7 @@ export default function FitmentsAuditPage() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [prodErr, setProdErr] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<SortOption>('UPDATED_AT_DESC'); // NEW: sorting state
 
   // Fit terms (Make/Model tree)
   const [terms, setTerms] = useState<FitTerm[]>([]);
@@ -99,6 +102,7 @@ export default function FitmentsAuditPage() {
     try {
       const url = new URL('/api/admin/products', window.location.origin);
       url.searchParams.set('first', '20');
+      url.searchParams.set('sortBy', sortBy); // NEW: pass sortBy parameter
       if (after) url.searchParams.set('after', after);
       const res = await fetch(url.toString(), { cache: 'no-store' });
       if (!res.ok) throw new Error(`Products HTTP ${res.status}`);
@@ -149,7 +153,15 @@ export default function FitmentsAuditPage() {
   useEffect(() => {
     loadProducts(null, false);
     loadTerms();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // NEW: Reload when sort changes
+  useEffect(() => {
+    setNextCursor(null);
+    loadProducts(null, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortBy]);
 
   // ---------- Helpers ----------
   function ensureForm(productGid: string): NewFitForm {
@@ -203,36 +215,26 @@ export default function FitmentsAuditPage() {
       const res = await fetch('/api/admin/fitments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // NOTE: This assumes your POST route takes strings for make/model (names).
-        // If your route wants term IDs instead, send makeId/modelId and adjust the server accordingly.
         body: JSON.stringify({
-          productGid: product.id,                          // FULL GID
-          make: findTermName(form.makeId),                 // name from term
-          model: findTermName(form.modelId),               // name from term
+          productGid: product.id,
+          make: findTermName(form.makeId),
+          model: findTermName(form.modelId),
           yearFrom,
           yearTo,
-          trim: form.trim.trim() || null,
-          chassis: form.chassis.trim() || null,
+          trim: form.trim || null,
+          chassis: form.chassis || null,
         }),
       });
       if (!res.ok) {
-        const j = await res.json().catch(() => null);
-        throw new Error(j?.error || `Add failed (${res.status})`);
+        const txt = await res.text();
+        throw new Error(txt || 'Create fitment failed');
       }
-      // Refresh this product’s fitments
+      // Success → reload fitments
       await loadFitments(product.id);
-      // Clear only this product’s form (keep make to speed workflow if you like)
-      setNewFitForm(s => ({
-        ...s,
-        [product.id]: {
-          ...s[product.id],
-          modelId: '',
-          yearFrom: '',
-          yearTo: '',
-          trim: '',
-          chassis: '',
-        },
-      }));
+      // Clear form
+      setNewFitForm(s => ({ ...s, [product.id]: {
+        makeId: '', modelId: '', yearFrom: '', yearTo: '', trim: '', chassis: '',
+      }}));
     } catch (e) {
       alert((e as Error).message);
     }
@@ -247,8 +249,8 @@ export default function FitmentsAuditPage() {
         body: JSON.stringify({ id: fitmentId }),
       });
       if (!res.ok) {
-        const j = await res.json().catch(() => null);
-        throw new Error(j?.error || `Delete failed (${res.status})`);
+        const txt = await res.text();
+        throw new Error(txt || 'Delete failed');
       }
       await loadFitments(productGid);
     } catch (e) {
@@ -256,26 +258,42 @@ export default function FitmentsAuditPage() {
     }
   }
 
-  // ---------- Render ----------
   return (
-    <main className="p-6">
-      <h1 className="text-2xl font-bold text-gray-900 mb-1">Products ⇄ Fitments</h1>
-      <p className="text-sm text-gray-700 mb-4">
-        Click a product to view and add fitments (Year range, Make, Model, optional Trim/Chassis).
-      </p>
+    <main className="p-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Fitments Audit</h1>
+          <p className="text-gray-700 text-sm">Manage product fitments by Make/Model/Year</p>
+        </div>
+        
+        {/* NEW: SORTING DROPDOWN */}
+        <div className="flex items-center gap-3">
+          <label className="text-sm text-gray-700 font-medium">Sort by:</label>
+          <select
+            className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 bg-white"
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value as SortOption)}
+          >
+            <option value="UPDATED_AT_DESC">Last Edited (Newest First)</option>
+            <option value="UPDATED_AT_ASC">Last Edited (Oldest First)</option>
+            <option value="TITLE_ASC">Alphabetical (A-Z)</option>
+            <option value="TITLE_DESC">Alphabetical (Z-A)</option>
+          </select>
+        </div>
+      </div>
 
-      {/* Errors */}
-      {prodErr && <div className="mb-3 text-red-700">Products error: {prodErr}</div>}
-      {termsErr && <div className="mb-3 text-red-700">Fit-terms error: {termsErr}</div>}
+      {loadingTerms && <div className="text-gray-700">Loading fit terms…</div>}
+      {termsErr && <div className="text-red-700">{termsErr}</div>}
+      {prodErr && <div className="text-red-700">{prodErr}</div>}
 
-      <div className="bg-white border rounded-xl shadow-sm overflow-hidden">
-        <table className="min-w-full border-collapse">
+      <div className="border rounded-lg overflow-auto bg-white">
+        <table className="w-full text-sm">
           <thead className="bg-gray-50">
-            <tr className="text-left text-gray-900">
-              <th className="px-3 py-2 border-b">Product</th>
-              <th className="px-3 py-2 border-b hidden md:table-cell">Handle</th>
-              <th className="px-3 py-2 border-b hidden md:table-cell">Status</th>
-              <th className="px-3 py-2 border-b w-24"></th>
+            <tr>
+              <th className="px-3 py-2 text-left text-gray-900 font-semibold">Product</th>
+              <th className="px-3 py-2 text-left text-gray-900 font-semibold hidden md:table-cell">Handle</th>
+              <th className="px-3 py-2 text-left text-gray-900 font-semibold hidden md:table-cell">Status</th>
+              <th className="px-3 py-2 text-left text-gray-900 font-semibold">Actions</th>
             </tr>
           </thead>
           <tbody>
