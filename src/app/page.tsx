@@ -1,13 +1,16 @@
-import Link from 'next/link'
+// app/page.tsx
+import { redirect } from 'next/navigation'
+import { getServerSession } from 'next-auth/next'
+import { authOptions } from './api/auth/[...nextauth]/route'
 
-export default function Home() {
-  return (
-    <main className="p-8 space-y-6">
-      <h1 className="text-2xl font-bold">Welcome</h1>
-      <p>Head to your taxonomy dashboard:</p>
-      <Link href="/dashboard" className="text-blue-600 underline">
-        Open Taxonomy Dashboard
-      </Link>
-    </main>
-  )
+export default async function HomePage() {
+  const session = await getServerSession(authOptions)
+  
+  if (session) {
+    // User is logged in, redirect to dashboard
+    redirect('/dashboard')
+  } else {
+    // User is not logged in, redirect to login
+    redirect('/login')
+  }
 }

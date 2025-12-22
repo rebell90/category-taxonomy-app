@@ -2,6 +2,7 @@
 import './globals.css'
 import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
+import { Providers } from './providers'
 import Link from 'next/link'
 
 export const metadata: Metadata = {
@@ -27,7 +28,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         </header>
 
         {/* Page content */}
-        {children}
+        <Providers>{children}</Providers>
       </body>
     </html>
   )
