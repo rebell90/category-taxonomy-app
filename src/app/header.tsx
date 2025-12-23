@@ -12,7 +12,7 @@ export function Header() {
       <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between">
         {/* Navigation Links */}
         <div className="flex items-center gap-6">
-          <Link href="/" className="font-semibold">Home</Link>
+          <Link href="/" className="font-semibold text-gray-700">Home</Link>
           
           {/* Only show these links if logged in */}
           {session && (
@@ -34,7 +34,7 @@ export function Header() {
               <span className="text-sm text-gray-600">{session.user?.email}</span>
               <button
                 onClick={() => signOut({ callbackUrl: '/login' })}
-                className="px-4 py-2 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50"
+                className="px-4 py-2 text-sm text-gray-700 bg-white border border-gray-500 rounded hover:bg-gray-50"
               >
                 Sign Out
               </button>

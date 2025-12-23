@@ -1,16 +1,20 @@
 'use client'
 
 import { signIn } from 'next-auth/react'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useState, useEffect } from 'react'
 
 export default function LoginPage() {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -27,16 +31,19 @@ export default function LoginPage() {
       if (result?.error) {
         setError('Invalid email or password')
         setLoading(false)
-      } else {
-        // Get the callback URL or default to dashboard
-        const callbackUrl = searchParams.get('callbackUrl') || '/dashboard'
-        router.push(callbackUrl)
+      } else if (result?.ok) {
+        router.push('/dashboard')
         router.refresh()
       }
     } catch (err) {
       setError('An error occurred. Please try again.')
       setLoading(false)
     }
+  }
+
+  // Prevent hydration mismatch
+  if (!mounted) {
+    return null
   }
 
   return (

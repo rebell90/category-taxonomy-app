@@ -1,0 +1,105 @@
+
+> category-taxonomy-app@0.1.0 build
+> next build
+
+   ▲ Next.js 15.5.9
+   - Environments: .env.local, .env
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 4.2s
+   Linting and checking validity of types ...
+
+./src/app/api/admin/distributors/import-to-shopify/route.ts
+7:10  Warning: 'generateProductDescription' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/app/api/admin/product-audit.csv/route.ts
+52:3  Warning: Unused eslint-disable directive (no problems were reported from 'no-constant-condition').
+
+./src/app/api/public/categories/route.ts
+27:27  Warning: '_req' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/app/api/public/categories-flat/route.ts
+1:1  Warning: Unused eslint-disable directive (no problems were reported from '@typescript-eslint/no-explicit-any').
+
+./src/app/dashboard/assign/page.tsx
+178:6  Warning: Unused eslint-disable directive (no problems were reported from '@next/next/no-img-element').
+180:7  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./src/app/dashboard/distributors/page.tsx
+45:10  Warning: 'selectedDistCat' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+45:27  Warning: 'setSelectedDistCat' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+64:6  Warning: React Hook useEffect has a missing dependency: 'loadProducts'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+411:23  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+556:21  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./src/app/dashboard/fitments-assign/page.tsx
+3:43  Warning: 'useRef' is defined but never used.  @typescript-eslint/no-unused-vars
+23:6  Warning: 'ProductsResponse' is defined but never used.  @typescript-eslint/no-unused-vars
+160:9  Warning: Expected an assignment or function call and instead saw an expression.  @typescript-eslint/no-unused-expressions
+189:5  Warning: React Hook useCallback has a missing dependency: 'fetchFitmentsFor'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+200:14  Warning: 'err' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/app/login/page.tsx
+38:14  Warning: 'err' is defined but never used.  @typescript-eslint/no-unused-vars
+
+info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules
+   Collecting page data ...
+   Generating static pages (0/40) ...
+   Generating static pages (10/40) 
+   Generating static pages (20/40) 
+   Generating static pages (30/40) 
+ ✓ Generating static pages (40/40)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                       Size  First Load JS
+┌ ƒ /                                            203 B         102 kB
+├ ○ /_not-found                                   1 kB         103 kB
+├ ƒ /api/admin/backfill                          203 B         102 kB
+├ ƒ /api/admin/backfill-fitments                 203 B         102 kB
+├ ƒ /api/admin/diagnostics                       203 B         102 kB
+├ ƒ /api/admin/distributors/import-to-shopify    203 B         102 kB
+├ ƒ /api/admin/distributors/list                 203 B         102 kB
+├ ƒ /api/admin/distributors/map-category         203 B         102 kB
+├ ƒ /api/admin/distributors/scrape               203 B         102 kB
+├ ƒ /api/admin/ensure-fitment-definition         203 B         102 kB
+├ ƒ /api/admin/fitments                          203 B         102 kB
+├ ƒ /api/admin/fitments/by-products              203 B         102 kB
+├ ƒ /api/admin/product-audit.csv                 203 B         102 kB
+├ ƒ /api/admin/products                          203 B         102 kB
+├ ƒ /api/admin/products-audit                    203 B         102 kB
+├ ƒ /api/admin/sync-pages                        203 B         102 kB
+├ ƒ /api/auth/[...nextauth]                      203 B         102 kB
+├ ƒ /api/categories                              203 B         102 kB
+├ ƒ /api/categories2                             203 B         102 kB
+├ ƒ /api/fit-terms                               203 B         102 kB
+├ ƒ /api/fitments                                203 B         102 kB
+├ ƒ /api/product-categories                      203 B         102 kB
+├ ƒ /api/public/categories                       203 B         102 kB
+├ ƒ /api/public/categories-flat                  203 B         102 kB
+├ ƒ /api/public/category-counts                  203 B         102 kB
+├ ƒ /api/public/fitment-filter                   203 B         102 kB
+├ ƒ /api/public/products-by-slug                 203 B         102 kB
+├ ƒ /api/public/products-by-slug-v2              203 B         102 kB
+├ ○ /dashboard                                   165 B         106 kB
+├ ○ /dashboard/assign                          1.74 kB         104 kB
+├ ○ /dashboard/audit                           2.85 kB         105 kB
+├ ○ /dashboard/categories                      2.55 kB         105 kB
+├ ○ /dashboard/categories2                     1.92 kB         104 kB
+├ ○ /dashboard/distributors                    3.26 kB         105 kB
+├ ○ /dashboard/fit-terms                       1.98 kB         104 kB
+├ ○ /dashboard/fitments                        2.31 kB         110 kB
+├ ○ /dashboard/fitments-assign                 3.27 kB         111 kB
+├ ○ /dashboard/fitments-audit                  2.97 kB         105 kB
+├ ○ /dashboard/product-fitments                2.65 kB         110 kB
+├ ○ /dashboard/tree                            1.46 kB         104 kB
+└ ○ /login                                      1.4 kB         107 kB
++ First Load JS shared by all                   102 kB
+  ├ chunks/1255-9494d7e861e97d68.js            45.9 kB
+  ├ chunks/4bd1b696-f785427dddbba9fb.js        54.2 kB
+  └ other shared chunks (total)                1.93 kB
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
