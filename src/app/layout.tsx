@@ -3,7 +3,7 @@ import './globals.css'
 import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
 import { Providers } from './providers'
-import Link from 'next/link'
+import { Header } from './header'  // We'll create this next
 
 export const metadata: Metadata = {
   title: 'Category Taxonomy App',
@@ -14,21 +14,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <body>
-        {/* Global header */}
-        <header className="border-b">
-          <div className="mx-auto max-w-6xl px-4 py-3 flex items-center gap-6">
-            <Link href="/" className="font-semibold">Home</Link>
-            <Link href="/dashboard" className="text-gray-700 hover:underline">Dashboard</Link>
-            <Link href="/dashboard/categories" className="text-gray-700 hover:underline">Assign Categories</Link>
-            <Link href="/dashboard/audit" className="text-gray-700 hover:underline">Product + Category View</Link>
-            <Link href="/dashboard/fit-terms" className="text-gray-700 hover:underline">Fitment Terms</Link>
-            <Link href="/dashboard/fitments-audit" className="text-gray-700 hover:underline">Fitment + Products</Link>
-            <Link href="/dashboard/distributors" className="text-blue-600 underline">Distributor Import</Link>
-          </div>
-        </header>
-
-        {/* Page content */}
-        <Providers>{children}</Providers>
+        <Providers>
+          {/* Header is now INSIDE Providers so it can access auth session */}
+          <Header />
+          {/* Page content */}
+          {children}
+        </Providers>
       </body>
     </html>
   )

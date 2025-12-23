@@ -1,45 +1,62 @@
+// app/dashboard/page.tsx
+import Link from 'next/link'
+
 export default function DashboardHome() {
   return (
     <div className="p-8 space-y-6">
-      <h1 className="text-2xl font-bold">Catalog Tools</h1>
+      <h1 className="text-2xl font-bold text-slate-900">Catalog Tools</h1>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <a href="/dashboard/audit" className="block border rounded-lg p-5 hover:shadow">
-          <div className="text-lg text-gray-600 font-semibold">Product + Category View</div>
-          <p className="text-sm text-gray-600 mt-1">
-            See which products have <code>taxonomy.category_slugs</code> set. Filter/search/paginate.
+        <Link 
+          href="/dashboard/audit" 
+          className="block border border-slate-200 bg-white rounded-lg p-5 hover:shadow-md transition-shadow"
+        >
+          <div className="text-lg text-slate-900 font-semibold">Product + Category View</div>
+          <p className="text-sm text-slate-600 mt-1">
+            See which products have <code className="bg-slate-100 px-1 rounded">taxonomy.category_slugs</code> set. Filter/search/paginate.
           </p>
-        </a>
+        </Link>
 
-       <a href="/dashboard/fit-terms" className="block border rounded-lg p-5 hover:shadow">
-          <div className="text-lg text-gray-600 font-semibold">Fitment Terms</div>
-          <p className="text-sm text-gray-600 mt-1">
+        <Link 
+          href="/dashboard/fit-terms" 
+          className="block border border-slate-200 bg-white rounded-lg p-5 hover:shadow-md transition-shadow"
+        >
+          <div className="text-lg text-slate-900 font-semibold">Fitment Terms</div>
+          <p className="text-sm text-slate-600 mt-1">
             Add fitment terms and values.
           </p>
-        </a>
+        </Link>
 
-       <a href="/dashboard/fitments-audit" className="block border rounded-lg p-5 hover:shadow">
-          <div className="text-lg text-gray-600 font-semibold">Fitment + Products</div>
-          <p className="text-sm text-gray-600 mt-1">
+        <Link 
+          href="/dashboard/fitments-audit" 
+          className="block border border-slate-200 bg-white rounded-lg p-5 hover:shadow-md transition-shadow"
+        >
+          <div className="text-lg text-slate-900 font-semibold">Fitment + Products</div>
+          <p className="text-sm text-slate-600 mt-1">
             Assign fitments to products.
           </p>
-        </a>
+        </Link>
         
-        <a href="/dashboard/categories" className="block border rounded-lg p-5 hover:shadow">
-          <div className="text-lg text-gray-600 font-semibold">Manage Category Tree</div>
-          <p className="text-sm text-gray-600 mt-1">
+        <Link 
+          href="/dashboard/categories" 
+          className="block border border-slate-200 bg-white rounded-lg p-5 hover:shadow-md transition-shadow"
+        >
+          <div className="text-lg text-slate-900 font-semibold">Manage Category Tree</div>
+          <p className="text-sm text-slate-600 mt-1">
             Add, update, or delete categories and nested-subcategories.
           </p>
-        </a>
+        </Link>
 
-        <a href="/dashboard/distributors" className="block border rounded-lg p-5 hover:shadow">
-          <div className="text-lg text-gray-600 font-semibold">Distributor Import</div>
-          <p className="text-sm text-gray-600 mt-1">
-            Distributer Import
+        <Link 
+          href="/dashboard/distributors" 
+          className="block border border-slate-200 bg-white rounded-lg p-5 hover:shadow-md transition-shadow"
+        >
+          <div className="text-lg text-slate-900 font-semibold">Distributor Import</div>
+          <p className="text-sm text-slate-600 mt-1">
+            Distributor Import
           </p>
-        </a>
-        
+        </Link>
       </div>
     </div>
-  );
+  )
 }
