@@ -3,14 +3,24 @@ import { auth } from './auth'
 import { NextResponse } from 'next/server'
 
 export default auth((req) => {
-  const isAuthenticated = !!req.auth
-  const isLoginPage = req.nextUrl.pathname === '/login'
+  const path = req.nextUrl.pathname
+  const method = req.method
   
-  console.log('🔒 Middleware running:', req.nextUrl.pathname)
-  console.log('🔑 Authenticated:', isAuthenticated)
+  // Allow public READ access to fit-terms (GET only)
+  if (path.startsWith('/api/fit-terms') && method === 'GET') {
+    return NextResponse.next()
+  }
+  
+  // Allow public READ access to other public endpoints
+  if (path.startsWith('/api/public/') && method === 'GET') {
+    return NextResponse.next()
+  }
+  
+  // Everything else requires authentication
+  const isAuthenticated = !!req.auth
+  const isLoginPage = path === '/login'
   
   if (!isAuthenticated && !isLoginPage) {
-    console.log('❌ Redirecting to login')
     return NextResponse.redirect(new URL('/login', req.url))
   }
   
@@ -20,9 +30,6 @@ export default auth((req) => {
 export const config = {
   matcher: [
     '/dashboard/:path*',
-    '/api/admin/:path*',
-    '/api/categories/:path*',
-    '/api/product-categories/:path*',
-    '/api/fit-terms/:path*',
+    '/api/:path*',  // Protect ALL API routes (middleware will check method)
   ],
 }
