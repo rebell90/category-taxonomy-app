@@ -30,6 +30,6 @@ export default auth((req) => {
 export const config = {
   matcher: [
     '/dashboard/:path*',
-    '/api/:path*',  // Protect ALL API routes (middleware will check method)
+    '/api/((?!auth).*)',  // Protect API routes but NOT /api/auth/* (NextAuth internals)
   ],
 }
