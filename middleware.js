@@ -14,6 +14,8 @@ export default auth((req) => {
 })
 
 export const config = {
+  // /api/mcp is intentionally NOT listed here — it uses bearer-token auth
+  // handled inside its own route handler (src/app/api/mcp/route.ts).
   matcher: [
     '/dashboard/:path*',
     '/api/admin/:path*',

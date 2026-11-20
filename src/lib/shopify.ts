@@ -101,6 +101,67 @@ export async function shopifyAdminREST<T = unknown>(
   return json as T;
 }
 
+// ——— Category ↔ Shopify page helpers ———————————————————————————————————————
+// Shared by /api/categories and /api/mcp so Shopify sync always uses the same path.
+
+export const SHOPIFY_ENABLED = Boolean(RAW_SHOP && TOKEN);
+
+interface ShopifyPageShape {
+  id: number | string;
+  handle?: string;
+}
+interface ShopifyCreateUpdateResp {
+  page?: ShopifyPageShape;
+}
+
+export function categoryToShopifyPagePayload(cat: {
+  title: string;
+  description: string | null;
+  slug: string;
+}) {
+  return {
+    page: {
+      title: cat.title,
+      body_html: cat.description ?? '',
+      template_suffix: 'category',
+      handle: cat.slug,
+      published: true,
+    },
+  };
+}
+
+export async function ensureShopifyPageForCategory(cat: {
+  id: string;
+  title: string;
+  description: string | null;
+  slug: string;
+  shopifyPageId: string | null;
+}): Promise<{ id: string | null; handle: string | null }> {
+  if (!SHOPIFY_ENABLED) return { id: null, handle: null };
+
+  const payload = categoryToShopifyPagePayload(cat);
+
+  if (cat.shopifyPageId) {
+    const resp = await shopifyAdminREST<ShopifyCreateUpdateResp>(
+      `/pages/${encodeURIComponent(cat.shopifyPageId)}.json`,
+      { method: 'PUT', body: JSON.stringify(payload) }
+    );
+    return {
+      id: resp.page ? String(resp.page.id) : cat.shopifyPageId,
+      handle: resp.page?.handle ?? null,
+    };
+  }
+
+  const resp = await shopifyAdminREST<ShopifyCreateUpdateResp>(
+    `/pages.json`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  );
+  return {
+    id: resp.page ? String(resp.page.id) : null,
+    handle: resp.page?.handle ?? null,
+  };
+}
+
 /**
  * Find a Page by handle → returns Admin GraphQL ID or null.
  * Tries Admin GraphQL (pages(query:)) first; if the server rejects `query`,

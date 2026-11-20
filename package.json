@@ -8,7 +8,8 @@
     "start": "next start -p ${PORT:-3000}",
     "prisma:generate": "prisma generate",
     "prisma:deploy": "prisma migrate deploy",
-    "prisma:status": "prisma migrate status"
+    "prisma:status": "prisma migrate status",
+    "generate-api-key": "tsx scripts/generate-api-key.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.14.0",
@@ -16,9 +17,11 @@
     "next": "^15.5.9",
     "next-auth": "^5.0.0-beta.30",
     "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "react-dom": "19.1.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
+    "tsx": "^4.23.15",
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/cheerio": "^0.22.35",

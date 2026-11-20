@@ -128,3 +128,25 @@ enum FitTermType {
   TRIM
   CHASSIS
 }
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  name       String    @unique
+  keyHash    String    @unique
+  scopes     String[]
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+}
+
+model McpAuditLog {
+  id           String   @id @default(cuid())
+  keyName      String
+  tool         String
+  inputsJson   String
+  resultStatus String
+  timestamp    DateTime @default(now())
+
+  @@index([keyName])
+  @@index([timestamp])
+}

@@ -1,7 +1,7 @@
 // /src/app/api/categories/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { shopifyAdminREST } from '@/lib/shopify';
+import { shopifyAdminREST, SHOPIFY_ENABLED, ensureShopifyPageForCategory } from '@/lib/shopify';
 
 /* =========================
    Types (align with Prisma)
@@ -12,7 +12,7 @@ type CategoryRow = {
   title: string;
   slug: string;
   parentId: string | null;
-  image: string | null;     // <— ensure this matches your Prisma model
+  image: string | null;
   description: string | null;
 };
 
@@ -38,72 +38,8 @@ type UpdateBody = {
 type DeleteBody = { id: string };
 
 /* =========================
-   Shopify helpers
+   Local helpers
 ========================= */
-
-const SHOPIFY_ENABLED = Boolean(
-  process.env.SHOPIFY_SHOP && process.env.SHOPIFY_ADMIN_TOKEN
-);
-
-interface ShopifyPageShape {
-  id: number | string;
-  handle?: string;
-  title?: string;
-  body_html?: string;
-}
-interface ShopifyCreateUpdateResp {
-  page?: ShopifyPageShape;
-}
-
-function categoryToShopifyPagePayload(cat: {
-  title: string;
-  description: string | null;
-  slug: string;
-}) {
-  return {
-    page: {
-      title: cat.title,
-      body_html: cat.description ?? '',
-      template_suffix: 'category',
-      handle: cat.slug, // keep Shopify handle in sync with your slug
-      published: true,
-    },
-  };
-}
-
-async function ensureShopifyPageForCategory(cat: {
-  id: string;
-  title: string;
-  description: string | null;
-  slug: string;
-  shopifyPageId: string | null;
-}): Promise<{ id: string | null; handle: string | null }> {
-  if (!SHOPIFY_ENABLED) return { id: null, handle: null };
-
-  const payload = categoryToShopifyPagePayload(cat);
-
-  // Update existing page
-  if (cat.shopifyPageId) {
-    const resp = await shopifyAdminREST<ShopifyCreateUpdateResp>(
-      `/pages/${encodeURIComponent(cat.shopifyPageId)}.json`,
-      { method: 'PUT', body: JSON.stringify(payload) }
-    );
-    return {
-      id: resp.page ? String(resp.page.id) : cat.shopifyPageId,
-      handle: resp.page?.handle ?? null,
-    };
-  }
-
-  // Create new page
-  const resp = await shopifyAdminREST<ShopifyCreateUpdateResp>(
-    `/pages.json`,
-    { method: 'POST', body: JSON.stringify(payload) }
-  );
-  return {
-    id: resp.page ? String(resp.page.id) : null,
-    handle: resp.page?.handle ?? null,
-  };
-}
 
 async function deleteShopifyPageById(pageId: string): Promise<void> {
   if (!SHOPIFY_ENABLED) return;
@@ -111,10 +47,6 @@ async function deleteShopifyPageById(pageId: string): Promise<void> {
     method: 'DELETE',
   });
 }
-
-/* =========================
-   Local helpers
-========================= */
 
 function buildTree(all: CategoryRow[], parentId: string | null): CategoryNode[] {
   return all
