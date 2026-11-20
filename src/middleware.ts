@@ -28,8 +28,9 @@ export default auth((req) => {
 })
 
 export const config = {
+  // /api/mcp uses bearer-token auth handled inside its own route handler.
   matcher: [
     '/dashboard/:path*',
-    '/api/((?!auth).*)',  // Protect API routes but NOT /api/auth/* (NextAuth internals)
+    '/api/((?!auth|mcp).*)',  // Exclude /api/auth/* (NextAuth) and /api/mcp (bearer token)
   ],
 }
