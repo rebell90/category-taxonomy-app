@@ -4,6 +4,7 @@ import prisma from '@/lib/prisma'
 
 export async function GET() {
   const rows = await prisma.category.findMany({
+    where: { archivedAt: null },
     select: { id: true, title: true, slug: true, parentId: true },
     orderBy: { title: 'asc' },
   })

@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
 
     // Grab matching categories
     const cats = await prisma.category.findMany({
-      where: { slug: { in: slugs } },
+      where: { slug: { in: slugs }, archivedAt: null },
       select: { id: true, slug: true },
     })
 

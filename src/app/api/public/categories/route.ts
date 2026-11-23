@@ -27,6 +27,7 @@ type CategoryNode = CategoryRow & { children: CategoryNode[] }
 export async function GET(_req: NextRequest) {
   try {
     const rows: CategoryRow[] = await prisma.category.findMany({
+      where: { archivedAt: null },
       orderBy: [{ parentId: 'asc' }, { title: 'asc' }],
       select: {
         id: true,

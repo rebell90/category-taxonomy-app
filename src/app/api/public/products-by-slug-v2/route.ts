@@ -105,8 +105,8 @@ export async function GET(req: NextRequest) {
     const chassis = url.searchParams.get('chassis') || undefined;
 
     // 1) Find category
-    const cat = await prisma.category.findUnique({
-      where: { slug },
+    const cat = await prisma.category.findFirst({
+      where: { slug, archivedAt: null },
       select: { id: true },
     });
     if (!cat) {

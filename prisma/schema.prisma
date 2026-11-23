@@ -20,6 +20,7 @@ model Category {
   lastSyncedAt          DateTime?
   shopifyHandle         String?               @db.VarChar(191)
   shopifyPageId         String?               @db.VarChar(191)
+  archivedAt            DateTime?
   parent                Category?             @relation("ParentChild", fields: [parentId], references: [id])
   children              Category[]            @relation("ParentChild")
   distributorCategories DistributorCategory[]
@@ -127,6 +128,17 @@ enum FitTermType {
   MODEL
   TRIM
   CHASSIS
+}
+
+model ArchiveToken {
+  id         String    @id @default(cuid())
+  categoryId String
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([categoryId])
+  @@index([expiresAt])
 }
 
 model ApiKey {
