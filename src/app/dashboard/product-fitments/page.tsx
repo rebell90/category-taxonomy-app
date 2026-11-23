@@ -30,8 +30,7 @@ type FitmentDraft = {
   chassis: string;
 };
 
-const PRODUCTS_API = '/api/admin/products';      // change if yours differs
-const FITMENTS_API_PUBLIC = '/api/fitments';
+const PRODUCTS_API = '/api/admin/products';
 const FITMENTS_API_ADMIN = '/api/admin/fitments';
 
 // light, readable theme
@@ -115,12 +114,13 @@ export default function ProductFitmentsPage() {
 
   async function loadFitments(productGid: string) {
     try {
-      const url = new URL(FITMENTS_API_PUBLIC, location.origin);
+      const url = new URL(FITMENTS_API_ADMIN, location.origin);
       url.searchParams.set('productGid', productGid);
       const res = await fetch(url.toString(), { cache: 'no-store' });
       if (!res.ok) throw new Error(`Fitments HTTP ${res.status}`);
-      const json: Fitment[] = await res.json();
-      setFitmentsByProduct(prev => ({ ...prev, [productGid]: json }));
+      const json = await res.json();
+      const list: Fitment[] = json?.fitments ?? json ?? [];
+      setFitmentsByProduct(prev => ({ ...prev, [productGid]: list }));
     } catch (e) {
       console.error('loadFitments error', e);
       setFitmentsByProduct(prev => ({ ...prev, [productGid]: [] }));

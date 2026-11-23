@@ -53,7 +53,24 @@ export async function GET(req: NextRequest) {
       orderBy: [{ productGid: 'asc' }, { make: 'asc' }, { model: 'asc' }],
     });
 
-    return NextResponse.json({ fitments: rows });
+    // Resolve FitTerm IDs to human-readable names
+    const ids = [...new Set(
+      rows.flatMap(r => [r.make, r.model, r.trim, r.chassis].filter(Boolean) as string[])
+    )];
+    const terms = ids.length
+      ? await prisma.fitTerm.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } })
+      : [];
+    const nameMap = new Map(terms.map(t => [t.id, t.name]));
+
+    const fitments = rows.map(r => ({
+      ...r,
+      make: nameMap.get(r.make) ?? r.make,
+      model: nameMap.get(r.model) ?? r.model,
+      trim: r.trim ? (nameMap.get(r.trim) ?? r.trim) : r.trim,
+      chassis: r.chassis ? (nameMap.get(r.chassis) ?? r.chassis) : r.chassis,
+    }));
+
+    return NextResponse.json({ fitments });
   } catch (err) {
     console.error('GET /admin/fitments error', err);
     return NextResponse.json({ error: 'Failed to list fitments' }, { status: 500 });
