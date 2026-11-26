@@ -9,7 +9,8 @@
     "prisma:generate": "prisma generate",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:status": "prisma migrate status",
-    "generate-api-key": "tsx scripts/generate-api-key.ts"
+    "generate-api-key": "tsx scripts/generate-api-key.ts",
+    "backfill-fitment-ids": "tsx scripts/backfill-fitment-ids.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.14.0",
