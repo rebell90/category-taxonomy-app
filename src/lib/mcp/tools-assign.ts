@@ -155,15 +155,17 @@ export async function handleSetProductFitment(args: {
   const replace = args.replace !== false;
   const dryRun = args.dry_run === true;
 
-  if (!args.fitments.length) return toolError('fitments array must not be empty');
+  if (!args.fitments.length && args.replace === false) return toolError('fitments array cannot be empty when replace=false (nothing to append)');
 
-  // Validate all rows upfront
-  const allErrors: string[] = [];
-  for (let i = 0; i < args.fitments.length; i++) {
-    const errs = await validateFitmentRow(args.fitments[i], i);
-    allErrors.push(...errs);
+  // Validate all rows upfront (skip if empty)
+  if (args.fitments.length) {
+    const allErrors: string[] = [];
+    for (let i = 0; i < args.fitments.length; i++) {
+      const errs = await validateFitmentRow(args.fitments[i], i);
+      allErrors.push(...errs);
+    }
+    if (allErrors.length) return toolError(allErrors.join('\n'));
   }
-  if (allErrors.length) return toolError(allErrors.join('\n'));
 
   const existing = await prisma.productFitment.findMany({
     where: { productGid },
@@ -184,18 +186,20 @@ export async function handleSetProductFitment(args: {
     await prisma.productFitment.deleteMany({ where: { productGid } });
   }
 
-  await prisma.productFitment.createMany({
-    data: args.fitments.map((f) => ({
-      productGid,
-      make: f.makeId,
-      model: f.modelId,
-      trim: f.trimId ?? null,
-      chassis: f.chassisId ?? null,
-      yearFrom: f.yearFrom ?? null,
-      yearTo: f.yearTo ?? null,
-    })),
-    skipDuplicates: true,
-  });
+  if (args.fitments.length) {
+    await prisma.productFitment.createMany({
+      data: args.fitments.map((f) => ({
+        productGid,
+        make: f.makeId,
+        model: f.modelId,
+        trim: f.trimId ?? null,
+        chassis: f.chassisId ?? null,
+        yearFrom: f.yearFrom ?? null,
+        yearTo: f.yearTo ?? null,
+      })),
+      skipDuplicates: true,
+    });
+  }
 
   await rebuildProductFitmentMetafield(productGid);
 
@@ -285,4 +289,60 @@ export async function handleBatchSetProductFitment(args: {
   const ok_count = results.filter((r) => r.status === 'ok').length;
   const err_count = results.filter((r) => r.status === 'error').length;
   return ok({ dry_run: dryRun, ok: ok_count, errors: err_count, results });
+}
+
+// ——— merge_vehicles ——————————————————————————————————————————————————————
+
+export async function handleMergeVehicles(args: {
+  sourceId: string;
+  targetId: string;
+  dry_run?: boolean;
+}): Promise<ToolResult> {
+  const dryRun = args.dry_run === true;
+
+  const [source, target] = await Promise.all([
+    prisma.fitTerm.findUnique({ where: { id: args.sourceId }, select: { id: true, type: true, name: true, parentId: true } }),
+    prisma.fitTerm.findUnique({ where: { id: args.targetId }, select: { id: true, type: true, name: true, parentId: true } }),
+  ]);
+
+  if (!source) return toolError(`sourceId "${args.sourceId}" not found`);
+  if (!target) return toolError(`targetId "${args.targetId}" not found`);
+  if (source.type !== target.type) return toolError(`source type ${source.type} != target type ${target.type}`);
+
+  // Count affected fitment rows for each field role
+  const [makeRows, modelRows, trimRows, chassisRows] = await Promise.all([
+    prisma.productFitment.count({ where: { make: args.sourceId } }),
+    prisma.productFitment.count({ where: { model: args.sourceId } }),
+    prisma.productFitment.count({ where: { trim: args.sourceId } }),
+    prisma.productFitment.count({ where: { chassis: args.sourceId } }),
+  ]);
+  const totalAffected = makeRows + modelRows + trimRows + chassisRows;
+
+  if (dryRun) {
+    return ok({
+      dry_run: true,
+      source: { id: source.id, type: source.type, name: source.name },
+      target: { id: target.id, type: target.type, name: target.name },
+      fitmentRowsToMove: { as_make: makeRows, as_model: modelRows, as_trim: trimRows, as_chassis: chassisRows, total: totalAffected },
+    });
+  }
+
+  // Move all fitment rows from source → target
+  await prisma.$transaction([
+    prisma.productFitment.updateMany({ where: { make: args.sourceId },    data: { make: args.targetId } }),
+    prisma.productFitment.updateMany({ where: { model: args.sourceId },   data: { model: args.targetId } }),
+    prisma.productFitment.updateMany({ where: { trim: args.sourceId },    data: { trim: args.targetId } }),
+    prisma.productFitment.updateMany({ where: { chassis: args.sourceId }, data: { chassis: args.targetId } }),
+  ]);
+
+  // Delete the source FitTerm (it's now unused)
+  // Note: children of source are NOT moved — caller should merge them separately if needed
+  await prisma.fitTerm.delete({ where: { id: args.sourceId } });
+
+  return ok({
+    merged: true,
+    source: { id: source.id, type: source.type, name: source.name, deleted: true },
+    target: { id: target.id, type: target.type, name: target.name },
+    fitmentRowsMoved: totalAffected,
+  });
 }

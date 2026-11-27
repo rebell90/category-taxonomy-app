@@ -22,6 +22,7 @@ import {
   handleSetProductFitment,
   handleBatchSetProductCategories,
   handleBatchSetProductFitment,
+  handleMergeVehicles,
 } from '@/lib/mcp/tools-assign';
 import {
   handleCreateMake,
@@ -124,6 +125,7 @@ const TOOL_SCOPE: Record<string, string> = {
   create_model: 'catalog',
   create_chassis: 'catalog',
   update_vehicle: 'catalog',
+  merge_vehicles: 'catalog',
   // archive
   preview_archive_category: 'archive',
   confirm_archive_category: 'archive',
@@ -134,7 +136,11 @@ const TOOL_SCOPE: Record<string, string> = {
 const SlugField = z.string().min(1).max(200).regex(/^[a-z0-9-]+$/, 'slug must be lowercase alphanumeric with hyphens');
 
 // existing
-const ListCategoriesInput = z.object({}).strict();
+const ListCategoriesInput = z.object({
+  compact: z.boolean().optional(),
+  cursor: z.string().max(50).optional(),
+  limit: z.number().int().min(1).max(500).optional(),
+}).strict();
 const SearchCategoriesInput = z.object({ query: z.string().min(1).max(200) }).strict();
 const GetCategoryInput = z.object({ id: z.string().min(1).max(50) }).strict();
 const CreateCategoryInput = z.object({
@@ -176,20 +182,20 @@ const FitmentRowInput = z.object({
 });
 const SetProductCategoriesInput = z.object({
   productGid: z.string().min(1).max(200),
-  categoryIds: z.array(z.string().min(1).max(50)).min(1).max(100),
+  categoryIds: z.array(z.string().min(1).max(50)).min(0).max(100),
   replace: z.boolean().optional(),
   dry_run: z.boolean().optional(),
 }).strict();
 const SetProductFitmentInput = z.object({
   productGid: z.string().min(1).max(200),
-  fitments: z.array(FitmentRowInput).min(1).max(200),
+  fitments: z.array(FitmentRowInput).min(0).max(200),
   replace: z.boolean().optional(),
   dry_run: z.boolean().optional(),
 }).strict();
 const BatchSetProductCategoriesInput = z.object({
   items: z.array(z.object({
     productGid: z.string().min(1).max(200),
-    categoryIds: z.array(z.string().min(1).max(50)).min(1).max(100),
+    categoryIds: z.array(z.string().min(1).max(50)).min(0).max(100),
     replace: z.boolean().optional(),
   })).min(1).max(50),
   dry_run: z.boolean().optional(),
@@ -197,7 +203,7 @@ const BatchSetProductCategoriesInput = z.object({
 const BatchSetProductFitmentInput = z.object({
   items: z.array(z.object({
     productGid: z.string().min(1).max(200),
-    fitments: z.array(FitmentRowInput).min(1).max(200),
+    fitments: z.array(FitmentRowInput).min(0).max(200),
     replace: z.boolean().optional(),
   })).min(1).max(50),
   dry_run: z.boolean().optional(),
@@ -209,6 +215,11 @@ const CreateMakeInput = z.object({ name: NameInput }).strict();
 const CreateModelInput = z.object({ name: NameInput, makeId: z.string().min(1).max(50) }).strict();
 const CreateChassisInput = z.object({ name: NameInput, parentId: z.string().min(1).max(50) }).strict();
 const UpdateVehicleInput = z.object({ id: z.string().min(1).max(50), name: NameInput }).strict();
+const MergeVehiclesInput = z.object({
+  sourceId: z.string().min(1).max(50),
+  targetId: z.string().min(1).max(50),
+  dry_run: z.boolean().optional(),
+}).strict();
 
 // archive
 const PreviewArchiveCategoryInput = z.object({ id: z.string().min(1).max(50) }).strict();
@@ -220,8 +231,15 @@ const TOOLS = [
   // ── read ──
   {
     name: 'list_categories',
-    description: 'List all categories in the taxonomy tree.',
-    inputSchema: { type: 'object', properties: {}, required: [] },
+    description: 'List all categories in the taxonomy tree. Use compact=true to omit description field. Use cursor+limit for pagination (default limit 200, max 500).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        compact: { type: 'boolean', default: false, description: 'Omit description field to reduce response size' },
+        cursor: { type: 'string', maxLength: 50, description: 'Pagination cursor (id of last item from previous page)' },
+        limit: { type: 'number', minimum: 1, maximum: 500, default: 200 },
+      },
+    },
   },
   {
     name: 'search_categories',
@@ -309,12 +327,12 @@ const TOOLS = [
   {
     name: 'set_product_categories',
     description:
-      'Assign categories to a product. replace=true (default) replaces all existing assignments; replace=false appends. dry_run=true returns a diff without writing. Idempotent. Triggers taxonomy.category_slugs metafield sync.',
+      'Assign categories to a product. replace=true (default) replaces all existing assignments; replace=false appends. dry_run=true returns a diff without writing. Idempotent. Triggers taxonomy.category_slugs metafield sync. Pass categoryIds: [] with replace: true to clear all categories.',
     inputSchema: {
       type: 'object',
       properties: {
         productGid: { type: 'string' },
-        categoryIds: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 100 },
+        categoryIds: { type: 'array', items: { type: 'string' }, minItems: 0, maxItems: 100 },
         replace: { type: 'boolean', default: true },
         dry_run: { type: 'boolean', default: false },
       },
@@ -324,7 +342,7 @@ const TOOLS = [
   {
     name: 'set_product_fitment',
     description:
-      'Set fitment rows for a product using FitTerm IDs (from list_vehicles). Both makeId and modelId are required. replace=true (default) replaces all; replace=false appends. dry_run=true returns diff. Triggers fitment.ymm metafield sync.',
+      'Set fitment rows for a product using FitTerm IDs (from list_vehicles). Both makeId and modelId are required. replace=true (default) replaces all; replace=false appends. dry_run=true returns diff. Triggers fitment.ymm metafield sync. Pass fitments: [] with replace: true to clear all fitment.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -343,7 +361,7 @@ const TOOLS = [
             },
             required: ['makeId', 'modelId'],
           },
-          minItems: 1,
+          minItems: 0,
           maxItems: 200,
         },
         replace: { type: 'boolean', default: true },
@@ -354,7 +372,7 @@ const TOOLS = [
   },
   {
     name: 'batch_set_product_categories',
-    description: 'Set categories for up to 50 products in one call. Each item succeeds or fails independently.',
+    description: 'Set categories for up to 50 products in one call. Each item succeeds or fails independently. Pass categoryIds: [] with replace: true to clear all categories.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -379,7 +397,7 @@ const TOOLS = [
   },
   {
     name: 'batch_set_product_fitment',
-    description: 'Set fitment for up to 50 products in one call. Each item succeeds or fails independently.',
+    description: 'Set fitment for up to 50 products in one call. Each item succeeds or fails independently. Pass fitments: [] with replace: true to clear all fitment.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -448,6 +466,19 @@ const TOOLS = [
       required: ['id', 'name'],
     },
   },
+  {
+    name: 'merge_vehicles',
+    description: 'Move all product fitment rows from one FitTerm (source) to another (target) of the same type, then delete the source. Use dry_run=true to preview. Source and target must be the same type (MAKE/MODEL/CHASSIS/TRIM). Does not move child FitTerms — merge those separately.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sourceId: { type: 'string', description: 'FitTerm ID to merge FROM (will be deleted)' },
+        targetId: { type: 'string', description: 'FitTerm ID to merge INTO (kept)' },
+        dry_run: { type: 'boolean', default: false },
+      },
+      required: ['sourceId', 'targetId'],
+    },
+  },
   // ── archive ──
   {
     name: 'preview_archive_category',
@@ -480,13 +511,20 @@ function toolErrorInline(message: string): ToolResult {
   return { content: [{ type: 'text', text: message }], isError: true };
 }
 
-async function handleListCategories(): Promise<ToolResult> {
+async function handleListCategories(args?: { compact?: boolean; cursor?: string; limit?: number }): Promise<ToolResult> {
+  const pageSize = args?.limit ?? 200;
   const rows = await prisma.category.findMany({
-    where: { archivedAt: null },
-    orderBy: [{ parentId: 'asc' }, { title: 'asc' }],
-    select: { id: true, title: true, slug: true, parentId: true, description: true },
+    where: { archivedAt: null, ...(args?.cursor ? { id: { gt: args.cursor } } : {}) },
+    orderBy: [{ id: 'asc' }],
+    select: args?.compact
+      ? { id: true, title: true, slug: true, parentId: true }
+      : { id: true, title: true, slug: true, parentId: true, description: true },
+    take: pageSize + 1,
   });
-  return okInline(rows);
+  const hasMore = rows.length > pageSize;
+  const items = hasMore ? rows.slice(0, pageSize) : rows;
+  const nextCursor = hasMore ? items[items.length - 1].id : null;
+  return okInline({ items, nextCursor, total: items.length });
 }
 
 async function handleSearchCategories(args: { query: string }): Promise<ToolResult> {
@@ -594,8 +632,7 @@ async function dispatchTool(
     switch (name) {
       // ── read ──
       case 'list_categories':
-        ListCategoriesInput.parse(args ?? {});
-        result = await handleListCategories();
+        result = await handleListCategories(ListCategoriesInput.parse(args ?? {}));
         break;
       case 'search_categories':
         result = await handleSearchCategories(SearchCategoriesInput.parse(args));
@@ -644,6 +681,9 @@ async function dispatchTool(
         break;
       case 'update_vehicle':
         result = await handleUpdateVehicle(UpdateVehicleInput.parse(args));
+        break;
+      case 'merge_vehicles':
+        result = await handleMergeVehicles(MergeVehiclesInput.parse(args));
         break;
       // ── archive ──
       case 'preview_archive_category':

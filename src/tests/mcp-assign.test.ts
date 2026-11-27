@@ -122,14 +122,31 @@ describe('handleSetProductCategories', () => {
 });
 
 describe('handleSetProductFitment', () => {
-  it('returns error when fitments array is empty', async () => {
+  it('allows empty fitments with replace=true (clears all)', async () => {
+    mockPrisma.productFitment.findMany.mockResolvedValue([{ id: 'fit-1', make: 'make-x', model: 'model-x' }]);
+    mockPrisma.productFitment.deleteMany.mockResolvedValue({ count: 1 });
+
     const result = await handleSetProductFitment({
       productGid: 'gid://shopify/Product/123',
       fitments: [],
+      replace: true,
+    });
+
+    expect(result.isError).toBeFalsy();
+    const data = JSON.parse(result.content[0].text);
+    expect(data.added).toBe(0);
+    expect(data.removed).toBe(1);
+  });
+
+  it('returns error when fitments array is empty with replace=false', async () => {
+    const result = await handleSetProductFitment({
+      productGid: 'gid://shopify/Product/123',
+      fitments: [],
+      replace: false,
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('must not be empty');
+    expect(result.content[0].text).toContain('cannot be empty when replace=false');
   });
 
   it('returns error when makeId is not found', async () => {

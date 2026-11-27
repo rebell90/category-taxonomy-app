@@ -123,6 +123,20 @@ function buildFitmentWhere(
   return { AND: and };
 }
 
+async function getDescendantIds(catId: string): Promise<string[]> {
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+    WITH RECURSIVE descendants AS (
+      SELECT id FROM "Category" WHERE id = ${catId} AND "archivedAt" IS NULL
+      UNION ALL
+      SELECT c.id FROM "Category" c
+      JOIN descendants d ON c."parentId" = d.id
+      WHERE c."archivedAt" IS NULL
+    )
+    SELECT id FROM descendants;
+  `;
+  return rows.map(r => r.id);
+}
+
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
@@ -134,6 +148,9 @@ export async function GET(req: NextRequest) {
 
     const limitParam = url.searchParams.get('limit');
     const limit = Math.max(1, Math.min(Number(limitParam || 24), 250));
+
+    const offsetParam = url.searchParams.get('offset');
+    const offset = Math.max(0, Number(offsetParam || 0));
 
     const year = url.searchParams.get('year') ? Number(url.searchParams.get('year')) : undefined;
 
@@ -164,19 +181,21 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ products: [] }, { headers: corsHeaders });
     }
 
-    // 2) Product links for this category
+    // 2) Gather all descendant category IDs (handles parent categories with no direct products)
+    const categoryIds = await getDescendantIds(cat.id);
+
+    // 3) Product links for this category and all descendants
     const links = await prisma.productCategory.findMany({
-      where: { categoryId: cat.id },
+      where: { categoryId: { in: categoryIds } },
       select: { productGid: true },
-      take: limit * 5,
     });
     if (links.length === 0) {
-      return NextResponse.json({ products: [] }, { headers: corsHeaders });
+      return NextResponse.json({ products: [], total: 0 }, { headers: corsHeaders });
     }
 
     let productGids = links.map(l => l.productGid);
 
-    // 3) Fitment intersection
+    // 4) Fitment intersection
     if (await tableExists('ProductFitment')) {
       // Resolve IDs → names so we can OR-match against old name-based rows
       const termNames = await resolveTermNames([makeId, modelId, trimId, chassisId]);
@@ -201,12 +220,13 @@ export async function GET(req: NextRequest) {
     }
 
     if (productGids.length === 0) {
-      return NextResponse.json({ products: [] }, { headers: corsHeaders });
+      return NextResponse.json({ products: [], total: 0 }, { headers: corsHeaders });
     }
 
-    productGids = productGids.slice(0, limit);
+    const total = productGids.length;
+    productGids = productGids.slice(offset, offset + limit);
 
-    // 4) Hydrate via Admin GraphQL
+    // 5) Hydrate via Admin GraphQL
     const GQL = `
       query Nodes($ids: [ID!]!) {
         nodes(ids: $ids) {
@@ -231,7 +251,7 @@ export async function GET(req: NextRequest) {
         return { id: n.id, handle: n.handle, title: n.title, image: { src: img }, price };
       });
 
-    return NextResponse.json({ products }, { headers: corsHeaders });
+    return NextResponse.json({ products, total }, { headers: corsHeaders });
   } catch (e) {
     console.error('[products-by-slug-v2] GET failed', e);
     return NextResponse.json({ error: 'Internal error' }, { status: 500, headers: corsHeaders });
