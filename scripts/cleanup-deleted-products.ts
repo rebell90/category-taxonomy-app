@@ -11,8 +11,8 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 const DRY_RUN = !process.argv.includes('--commit');
 
-const SHOPIFY_STORE   = process.env.SHOPIFY_STORE_DOMAIN!;
-const SHOPIFY_TOKEN   = process.env.SHOPIFY_ADMIN_API_TOKEN!;
+const SHOPIFY_STORE   = process.env.SHOPIFY_SHOP!;
+const SHOPIFY_TOKEN   = process.env.SHOPIFY_ADMIN_TOKEN!;
 const API_VERSION     = '2026-10';
 
 async function shopifyProductExists(gid: string): Promise<boolean> {
