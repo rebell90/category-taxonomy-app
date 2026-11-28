@@ -13,7 +13,7 @@ const DRY_RUN = !process.argv.includes('--commit');
 
 const SHOPIFY_STORE   = process.env.SHOPIFY_STORE_DOMAIN!;
 const SHOPIFY_TOKEN   = process.env.SHOPIFY_ADMIN_API_TOKEN!;
-const API_VERSION     = '2024-10';
+const API_VERSION     = '2026-10';
 
 async function shopifyProductExists(gid: string): Promise<boolean> {
   const id = gid.replace('gid://shopify/Product/', '');
