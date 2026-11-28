@@ -3,6 +3,7 @@ import {
   rebuildProductCategoryMetafield,
   rebuildProductFitmentMetafield,
 } from '@/lib/product-metafields';
+import { shopifyAdminGraphQL } from '@/lib/shopify';
 import { ok, toolError, normalizeGid, type ToolResult } from './types';
 
 // ——— Validation helpers ——————————————————————————————————————————————————
@@ -319,11 +320,57 @@ export async function handleMergeVehicles(args: {
   const totalAffected = makeRows + modelRows + trimRows + chassisRows;
 
   if (dryRun) {
+    // Collect affected product GIDs (up to 50 samples)
+    const affectedRows = await prisma.productFitment.findMany({
+      where: {
+        OR: [
+          { make: args.sourceId },
+          { model: args.sourceId },
+          { trim: args.sourceId },
+          { chassis: args.sourceId },
+        ],
+      },
+      select: { productGid: true },
+      distinct: ['productGid'],
+      take: 50,
+    });
+    const sampleGids = affectedRows.map((r) => r.productGid);
+
+    // Fetch titles from Shopify for the sample
+    type NodesResp = { nodes: Array<{ __typename: 'Product'; id: string; title: string } | null> };
+    const NODES_GQL = `query Nodes($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { __typename id title } } }`;
+    let affectedProducts: Array<{ id: string; title: string }> = sampleGids.map((id) => ({ id, title: '' }));
+    try {
+      const data = await shopifyAdminGraphQL<NodesResp>(NODES_GQL, { ids: sampleGids });
+      affectedProducts = (data.nodes || [])
+        .filter((n): n is NonNullable<typeof n> => !!n && n.__typename === 'Product')
+        .map((n) => ({ id: n.id, title: n.title }));
+    } catch { /* titles unavailable, return IDs only */ }
+
+    // Count total unique products (may exceed sample)
+    const totalUniqueProducts = await prisma.productFitment.findMany({
+      where: {
+        OR: [
+          { make: args.sourceId },
+          { model: args.sourceId },
+          { trim: args.sourceId },
+          { chassis: args.sourceId },
+        ],
+      },
+      select: { productGid: true },
+      distinct: ['productGid'],
+    }).then((r) => r.length);
+
     return ok({
       dry_run: true,
       source: { id: source.id, type: source.type, name: source.name },
       target: { id: target.id, type: target.type, name: target.name },
       fitmentRowsToMove: { as_make: makeRows, as_model: modelRows, as_trim: trimRows, as_chassis: chassisRows, total: totalAffected },
+      affectedProductCount: totalUniqueProducts,
+      affectedProducts,
+      ...(affectedProducts.length < totalUniqueProducts
+        ? { note: `Showing first ${affectedProducts.length} of ${totalUniqueProducts} affected products` }
+        : {}),
     });
   }
 

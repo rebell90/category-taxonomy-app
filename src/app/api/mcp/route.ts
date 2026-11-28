@@ -16,6 +16,8 @@ import {
   handleGetProductAssignments,
   handleListUnassignedProducts,
   handleListVehicles,
+  handleGetAssignmentStats,
+  handleListShopifyOnlyFitment,
 } from '@/lib/mcp/tools-read-products';
 import {
   handleSetProductCategories,
@@ -112,6 +114,8 @@ const TOOL_SCOPE: Record<string, string> = {
   get_product_assignments: 'read',
   list_unassigned_products: 'read',
   list_vehicles: 'read',
+  get_assignment_stats: 'read',
+  list_shopify_only_fitment: 'read',
   // write
   create_category: 'write',
   update_category: 'write',
@@ -225,6 +229,13 @@ const MergeVehiclesInput = z.object({
 const PreviewArchiveCategoryInput = z.object({ id: z.string().min(1).max(50) }).strict();
 const ConfirmArchiveCategoryInput = z.object({ token: z.string().min(1).max(50) }).strict();
 
+// new read tools
+const GetAssignmentStatsInput = z.object({}).strict();
+const ListShopifyOnlyFitmentInput = z.object({
+  cursor: z.string().max(500).nullable().optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+}).strict();
+
 // ——— Tool definitions (MCP schema) ————————————————————————————————————————
 
 const TOOLS = [
@@ -288,6 +299,22 @@ const TOOLS = [
       properties: {
         type: { type: 'string', enum: ['MAKE', 'MODEL', 'TRIM', 'CHASSIS'] },
         parentId: { type: 'string', description: 'Filter by parent FitTerm ID' },
+      },
+    },
+  },
+  {
+    name: 'get_assignment_stats',
+    description: 'Return counts of Shopify products with/without category and fitment assignments. Useful for assessing overall coverage.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'list_shopify_only_fitment',
+    description: 'Paginated list of products that have a Shopify fitment.ymm metafield value but no rows in the app fitment table. These products need to be migrated.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        cursor: { type: 'string', description: 'Pagination cursor from previous response' },
+        limit: { type: 'number', minimum: 1, maximum: 50, default: 20 },
       },
     },
   },
@@ -651,6 +678,13 @@ async function dispatchTool(
         break;
       case 'list_vehicles':
         result = await handleListVehicles(ListVehiclesInput.parse(args ?? {}));
+        break;
+      case 'get_assignment_stats':
+        GetAssignmentStatsInput.parse(args ?? {});
+        result = await handleGetAssignmentStats();
+        break;
+      case 'list_shopify_only_fitment':
+        result = await handleListShopifyOnlyFitment(ListShopifyOnlyFitmentInput.parse(args ?? {}));
         break;
       // ── write ──
       case 'create_category':

@@ -31,7 +31,6 @@ export async function handleGetProductAssignments(args: {
     }),
   ]);
 
-  // Collect all FitTerm IDs referenced by fitment rows
   const termIds = new Set<string>();
   fitmentRows.forEach((r) => {
     if (r.make) termIds.add(r.make);
@@ -100,56 +99,172 @@ export async function handleListUnassignedProducts(args: {
   const limit = Math.min(args.limit ?? 20, 50);
   const filter = args.filter ?? 'any';
 
-  const data = await shopifyAdminGraphQL<ShopifyProductsData>(PRODUCTS_QUERY, {
-    first: limit * 3, // over-fetch because we'll filter
-    after: args.cursor ?? null,
-  });
+  let cursor = args.cursor ?? null;
+  const collected: Array<{
+    id: string; title: string; status: string;
+    missingCategories: boolean; missingFitment: boolean;
+  }> = [];
+  let nextCursor: string | null = null;
+  const MAX_ITERS = 40; // safety cap: ~2000 Shopify products
 
-  const nodes = data.products?.nodes ?? [];
-  const pageInfo = data.products?.pageInfo;
-  const gids = nodes.map((n) => n.id);
+  for (let i = 0; i < MAX_ITERS && collected.length < limit; i++) {
+    const data = await shopifyAdminGraphQL<ShopifyProductsData>(PRODUCTS_QUERY, {
+      first: 50,
+      after: cursor,
+    });
 
-  if (gids.length === 0) {
-    return ok({ products: [], nextCursor: null });
-  }
+    const nodes = data.products?.nodes ?? [];
+    const pageInfo = data.products?.pageInfo;
 
-  const [catGids, fitGids] = await Promise.all([
-    prisma.productCategory.findMany({
-      where: { productGid: { in: gids } },
-      select: { productGid: true },
-      distinct: ['productGid'],
-    }),
-    prisma.productFitment.findMany({
-      where: { productGid: { in: gids } },
-      select: { productGid: true },
-      distinct: ['productGid'],
-    }),
-  ]);
+    if (nodes.length === 0) break;
 
-  const hasCat = new Set(catGids.map((r) => r.productGid));
-  const hasFit = new Set(fitGids.map((r) => r.productGid));
+    const gids = nodes.map((n) => n.id);
+    const [catGids, fitGids] = await Promise.all([
+      prisma.productCategory.findMany({
+        where: { productGid: { in: gids } },
+        select: { productGid: true },
+        distinct: ['productGid'],
+      }),
+      prisma.productFitment.findMany({
+        where: { productGid: { in: gids } },
+        select: { productGid: true },
+        distinct: ['productGid'],
+      }),
+    ]);
 
-  const unassigned = nodes
-    .filter((n) => {
+    const hasCat = new Set(catGids.map((r) => r.productGid));
+    const hasFit = new Set(fitGids.map((r) => r.productGid));
+
+    for (const n of nodes) {
+      if (collected.length >= limit) break;
       const missingCat = !hasCat.has(n.id);
       const missingFit = !hasFit.has(n.id);
-      if (filter === 'missing_categories') return missingCat;
-      if (filter === 'missing_fitment') return missingFit;
-      return missingCat || missingFit; // 'any'
-    })
-    .slice(0, limit)
-    .map((n) => ({
-      id: n.id,
-      title: n.title,
-      status: n.status,
-      missingCategories: !hasCat.has(n.id),
-      missingFitment: !hasFit.has(n.id),
-    }));
+      const matches =
+        filter === 'missing_categories' ? missingCat
+        : filter === 'missing_fitment'  ? missingFit
+        : missingCat || missingFit;
+      if (matches) {
+        collected.push({ id: n.id, title: n.title, status: n.status, missingCategories: missingCat, missingFitment: missingFit });
+      }
+    }
+
+    if (!pageInfo?.hasNextPage) {
+      nextCursor = null;
+      break;
+    }
+
+    cursor = pageInfo.endCursor;
+    if (collected.length >= limit) {
+      nextCursor = cursor;
+    }
+  }
+
+  return ok({ products: collected, nextCursor });
+}
+
+// ——— get_assignment_stats ————————————————————————————————————————————————
+
+const PRODUCTS_COUNT_QUERY = /* GraphQL */ `
+  query { productsCount { count } }
+`;
+
+export async function handleGetAssignmentStats(): Promise<ToolResult> {
+  const [countData, catGids, fitGids] = await Promise.all([
+    shopifyAdminGraphQL<{ productsCount: { count: number } }>(PRODUCTS_COUNT_QUERY, {}),
+    prisma.productCategory.findMany({ select: { productGid: true }, distinct: ['productGid'] }),
+    prisma.productFitment.findMany({ select: { productGid: true }, distinct: ['productGid'] }),
+  ]);
+
+  const totalShopify = countData.productsCount?.count ?? 0;
+  const catSet = new Set(catGids.map((r) => r.productGid));
+  const fitSet = new Set(fitGids.map((r) => r.productGid));
+  const withBoth = [...catSet].filter((g) => fitSet.has(g)).length;
+  const withEither = new Set([...catSet, ...fitSet]).size;
 
   return ok({
-    products: unassigned,
-    nextCursor: pageInfo?.hasNextPage ? pageInfo.endCursor : null,
+    totalShopifyProducts: totalShopify,
+    withCategories: catSet.size,
+    withFitment: fitSet.size,
+    withBoth,
+    withEither,
+    withNeither: Math.max(0, totalShopify - withEither),
   });
+}
+
+// ——— list_shopify_only_fitment ——————————————————————————————————————————
+
+const PRODUCTS_YMM_QUERY = /* GraphQL */ `
+  query ListProductsYmm($first: Int!, $after: String) {
+    products(first: $first, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        id title
+        fitmentYmm: metafield(namespace: "fitment", key: "ymm") { value }
+      }
+    }
+  }
+`;
+
+type ShopifyYmmNode = { id: string; title: string; fitmentYmm: { value: string } | null };
+type ShopifyYmmData = {
+  products: {
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    nodes: ShopifyYmmNode[];
+  };
+};
+
+export async function handleListShopifyOnlyFitment(args: {
+  cursor?: string | null;
+  limit?: number;
+}): Promise<ToolResult> {
+  const limit = Math.min(args.limit ?? 20, 50);
+
+  let cursor = args.cursor ?? null;
+  const collected: Array<{ id: string; title: string; shopifyYmmValue: string }> = [];
+  let nextCursor: string | null = null;
+  const MAX_ITERS = 40;
+
+  for (let i = 0; i < MAX_ITERS && collected.length < limit; i++) {
+    const data = await shopifyAdminGraphQL<ShopifyYmmData>(PRODUCTS_YMM_QUERY, {
+      first: 50,
+      after: cursor,
+    });
+
+    const nodes = data.products?.nodes ?? [];
+    const pageInfo = data.products?.pageInfo;
+
+    if (nodes.length === 0) break;
+
+    const withYmm = nodes.filter((n) => n.fitmentYmm?.value);
+    if (withYmm.length > 0) {
+      const gids = withYmm.map((n) => n.id);
+      const appFitRows = await prisma.productFitment.findMany({
+        where: { productGid: { in: gids } },
+        select: { productGid: true },
+        distinct: ['productGid'],
+      });
+      const hasAppFit = new Set(appFitRows.map((r) => r.productGid));
+
+      for (const n of withYmm) {
+        if (collected.length >= limit) break;
+        if (!hasAppFit.has(n.id)) {
+          collected.push({ id: n.id, title: n.title, shopifyYmmValue: n.fitmentYmm!.value });
+        }
+      }
+    }
+
+    if (!pageInfo?.hasNextPage) {
+      nextCursor = null;
+      break;
+    }
+
+    cursor = pageInfo.endCursor;
+    if (collected.length >= limit) {
+      nextCursor = cursor;
+    }
+  }
+
+  return ok({ products: collected, nextCursor });
 }
 
 // ——— list_vehicles ——————————————————————————————————————————————————————

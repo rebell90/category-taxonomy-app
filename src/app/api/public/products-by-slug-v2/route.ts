@@ -30,12 +30,44 @@ type NodesResp = {
         id: string;
         handle: string;
         title: string;
-        images: { edges: Array<{ node: { url?: string; src?: string } }> };
+        status: string;
+        images: { edges: Array<{ node: { url?: string } }> };
         priceRangeV2?: { minVariantPrice: { amount: string; currencyCode: string } };
       }
     | null
   >;
 };
+
+const NODES_GQL = `
+  query Nodes($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on Product {
+        __typename id handle title status
+        images(first: 1) { edges { node { url } } }
+        priceRangeV2 { minVariantPrice { amount currencyCode } }
+      }
+    }
+  }
+`;
+
+// Hydrate product GIDs in batches of 250, returning only ACTIVE products.
+async function hydrateActive(gids: string[]): Promise<ProductLite[]> {
+  const results: ProductLite[] = [];
+  const BATCH = 250;
+  for (let i = 0; i < gids.length; i += BATCH) {
+    const batch = gids.slice(i, i + BATCH);
+    const data = await shopifyAdminGraphQL<NodesResp>(NODES_GQL, { ids: batch });
+    for (const n of (data.nodes || [])) {
+      if (!n || n.__typename !== 'Product' || n.status !== 'ACTIVE') continue;
+      const img = n.images?.edges?.[0]?.node?.url ?? null;
+      const price = n.priceRangeV2
+        ? `${n.priceRangeV2.minVariantPrice.amount} ${n.priceRangeV2.minVariantPrice.currencyCode}`
+        : null;
+      results.push({ id: n.id, handle: n.handle, title: n.title, image: { src: img }, price });
+    }
+  }
+  return results;
+}
 
 async function tableExists(tableName: string): Promise<boolean> {
   try {
@@ -64,13 +96,6 @@ async function resolveTermNames(ids: (string | undefined)[]): Promise<Map<string
   return new Map(terms.map(t => [t.id, t.name]));
 }
 
-/**
- * Build a Prisma WHERE that matches fitment by ID OR by name, so it works for
- * both new rows (store FitTerm IDs) and old rows (store human-readable names).
- *
- * chassis=null on a fitment row means "fits all chassis" and always matches
- * when any chassis filter is active.
- */
 function buildFitmentWhere(
   productGids: string[],
   p: {
@@ -109,7 +134,6 @@ function buildFitmentWhere(
   if (hasModel)   and.push(fieldOr('model',   p.modelId,   p.resolvedModelName,   p.modelName));
   if (hasTrim)    and.push(fieldOr('trim',    p.trimId,    p.resolvedTrimName,    p.trimName));
   if (hasChassis) {
-    // chassis=null means "fits all chassis" — always match those rows
     const chassisOr = fieldOr('chassis', p.chassisId, p.resolvedChassisName, p.chassisName);
     and.push({ OR: [{ chassis: null }, ...(chassisOr.OR ?? [])] });
   }
@@ -147,20 +171,18 @@ export async function GET(req: NextRequest) {
     }
 
     const limitParam = url.searchParams.get('limit');
-    const limit = Math.max(1, Math.min(Number(limitParam || 24), 500));
+    const limit = Math.max(1, Math.min(Number(limitParam || 24), 250));
 
     const offsetParam = url.searchParams.get('offset');
     const offset = Math.max(0, Number(offsetParam || 0));
 
     const year = url.searchParams.get('year') ? Number(url.searchParams.get('year')) : undefined;
 
-    // Primary: ID params sent by the storefront picker (FitTerm IDs)
     const makeId    = url.searchParams.get('make_id')    || undefined;
     const modelId   = url.searchParams.get('model_id')   || undefined;
     const trimId    = url.searchParams.get('trim_id')    || undefined;
     const chassisId = url.searchParams.get('chassis_id') || undefined;
 
-    // Fallback: name params (old theme code or direct calls)
     const makeName    = url.searchParams.get('make')    || undefined;
     const modelName   = url.searchParams.get('model')   || undefined;
     const trimName    = url.searchParams.get('trim')    || undefined;
@@ -181,7 +203,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ products: [] }, { headers: corsHeaders });
     }
 
-    // 2) Gather all descendant category IDs (handles parent categories with no direct products)
+    // 2) Gather all descendant category IDs
     const categoryIds = await getDescendantIds(cat.id);
 
     // 3) Product links for this category and all descendants
@@ -190,15 +212,13 @@ export async function GET(req: NextRequest) {
       select: { productGid: true },
     });
     if (links.length === 0) {
-      return NextResponse.json({ products: [], total: 0 }, { headers: corsHeaders });
+      return NextResponse.json({ products: [], total: 0, hasMore: false }, { headers: corsHeaders });
     }
 
-    // Deduplicate: a product assigned to multiple descendant categories appears once per assignment
     let productGids = [...new Set(links.map(l => l.productGid))];
 
     // 4) Fitment intersection
     if (await tableExists('ProductFitment')) {
-      // Resolve IDs → names so we can OR-match against old name-based rows
       const termNames = await resolveTermNames([makeId, modelId, trimId, chassisId]);
 
       const fitWhere = buildFitmentWhere(productGids, {
@@ -220,38 +240,25 @@ export async function GET(req: NextRequest) {
     }
 
     if (productGids.length === 0) {
-      return NextResponse.json({ products: [], total: 0 }, { headers: corsHeaders });
+      return NextResponse.json({ products: [], total: 0, hasMore: false }, { headers: corsHeaders });
     }
 
-    const total = productGids.length;
-    productGids = productGids.slice(offset, offset + limit);
+    // 5) Hydrate ALL GIDs in batches, filtering to ACTIVE products only.
+    //    This ensures total and pagination are based on live Shopify products.
+    const allLive = await hydrateActive(productGids);
+    const total = allLive.length;
 
-    // 5) Hydrate via Admin GraphQL
-    const GQL = `
-      query Nodes($ids: [ID!]!) {
-        nodes(ids: $ids) {
-          ... on Product {
-            id handle title
-            images(first: 1) { edges { node { url } } }
-            priceRangeV2 { minVariantPrice { amount currencyCode } }
-          }
-        }
-      }
-    `;
+    if (total === 0) {
+      return NextResponse.json({ products: [], total: 0, hasMore: false }, { headers: corsHeaders });
+    }
 
-    const data = await shopifyAdminGraphQL<NodesResp>(GQL, { ids: productGids });
+    const page = allLive.slice(offset, offset + limit);
+    const hasMore = offset + limit < total;
 
-    const products: ProductLite[] = (data.nodes || [])
-      .filter((n): n is NonNullable<NodesResp['nodes'][number]> => !!n)
-      .map(n => {
-        const img = n.images?.edges?.[0]?.node?.url ?? null;
-        const price = n.priceRangeV2
-          ? `${n.priceRangeV2.minVariantPrice.amount} ${n.priceRangeV2.minVariantPrice.currencyCode}`
-          : null;
-        return { id: n.id, handle: n.handle, title: n.title, image: { src: img }, price };
-      });
-
-    return NextResponse.json({ products, total }, { headers: corsHeaders });
+    return NextResponse.json(
+      { products: page, total, hasMore, nextOffset: offset + limit },
+      { headers: corsHeaders },
+    );
   } catch (e) {
     console.error('[products-by-slug-v2] GET failed', e);
     return NextResponse.json({ error: 'Internal error' }, { status: 500, headers: corsHeaders });
