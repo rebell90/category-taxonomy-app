@@ -15,7 +15,7 @@ const SHOPIFY_STORE   = process.env.SHOPIFY_SHOP!;
 const SHOPIFY_TOKEN   = process.env.SHOPIFY_ADMIN_TOKEN!;
 const API_VERSION     = '2026-10';
 
-async function shopifyProductExists(gid: string): Promise<boolean> {
+async function shopifyProductExists(gid: string, attempt = 0): Promise<boolean> {
   const id = gid.replace('gid://shopify/Product/', '');
   const url = `https://${SHOPIFY_STORE}/admin/api/${API_VERSION}/products/${id}.json?fields=id`;
   const res = await fetch(url, {
@@ -23,6 +23,11 @@ async function shopifyProductExists(gid: string): Promise<boolean> {
   });
   if (res.status === 404) return false;
   if (res.status === 200) return true;
+  if (res.status === 429 && attempt < 5) {
+    const retryAfter = Number(res.headers.get('retry-after') || '2');
+    await new Promise(r => setTimeout(r, retryAfter * 1000));
+    return shopifyProductExists(gid, attempt + 1);
+  }
   throw new Error(`Unexpected Shopify status ${res.status} for ${gid}`);
 }
 
@@ -50,8 +55,8 @@ async function main() {
       deleted.push(gid);
       console.log(`  ✗ DELETED: ${gid}`);
     }
-    // small delay to avoid rate limiting
-    await new Promise(r => setTimeout(r, 200));
+    // 500ms between requests to stay under Shopify's rate limit
+    await new Promise(r => setTimeout(r, 500));
   }
 
   console.log(`\n${deleted.length} deleted product(s) found.\n`);
