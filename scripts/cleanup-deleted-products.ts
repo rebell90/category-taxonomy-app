@@ -21,7 +21,9 @@ async function shopifyProductExists(gid: string): Promise<boolean> {
   const res = await fetch(url, {
     headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
   });
-  return res.status === 200;
+  if (res.status === 404) return false;
+  if (res.status === 200) return true;
+  throw new Error(`Unexpected Shopify status ${res.status} for ${gid}`);
 }
 
 async function main() {
