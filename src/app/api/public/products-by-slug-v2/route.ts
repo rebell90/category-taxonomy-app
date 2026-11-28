@@ -147,7 +147,7 @@ export async function GET(req: NextRequest) {
     }
 
     const limitParam = url.searchParams.get('limit');
-    const limit = Math.max(1, Math.min(Number(limitParam || 24), 250));
+    const limit = Math.max(1, Math.min(Number(limitParam || 24), 500));
 
     const offsetParam = url.searchParams.get('offset');
     const offset = Math.max(0, Number(offsetParam || 0));
@@ -193,7 +193,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ products: [], total: 0 }, { headers: corsHeaders });
     }
 
-    let productGids = links.map(l => l.productGid);
+    // Deduplicate: a product assigned to multiple descendant categories appears once per assignment
+    let productGids = [...new Set(links.map(l => l.productGid))];
 
     // 4) Fitment intersection
     if (await tableExists('ProductFitment')) {
@@ -212,7 +213,6 @@ export async function GET(req: NextRequest) {
         const fits = await prisma.productFitment.findMany({
           where: fitWhere,
           select: { productGid: true },
-          take: limit * 10,
         });
         const allowed = new Set(fits.map(f => f.productGid));
         productGids = productGids.filter(id => allowed.has(id));

@@ -31,6 +31,6 @@ export const config = {
   // /api/mcp uses bearer-token auth handled inside its own route handler.
   matcher: [
     '/dashboard/:path*',
-    '/api/((?!auth|mcp).*)',  // Exclude /api/auth/* (NextAuth) and /api/mcp (bearer token)
+    '/api/((?!auth|mcp|webhooks).*)',  // Exclude /api/auth/*, /api/mcp (bearer), /api/webhooks (HMAC)
   ],
 }

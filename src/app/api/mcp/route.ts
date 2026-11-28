@@ -513,18 +513,21 @@ function toolErrorInline(message: string): ToolResult {
 
 async function handleListCategories(args?: { compact?: boolean; cursor?: string; limit?: number }): Promise<ToolResult> {
   const pageSize = args?.limit ?? 200;
-  const rows = await prisma.category.findMany({
-    where: { archivedAt: null, ...(args?.cursor ? { id: { gt: args.cursor } } : {}) },
-    orderBy: [{ id: 'asc' }],
-    select: args?.compact
-      ? { id: true, title: true, slug: true, parentId: true }
-      : { id: true, title: true, slug: true, parentId: true, description: true },
-    take: pageSize + 1,
-  });
+  const [rows, total] = await Promise.all([
+    prisma.category.findMany({
+      where: { archivedAt: null, ...(args?.cursor ? { id: { gt: args.cursor } } : {}) },
+      orderBy: [{ id: 'asc' }],
+      select: args?.compact
+        ? { id: true, title: true, slug: true, parentId: true }
+        : { id: true, title: true, slug: true, parentId: true, description: true },
+      take: pageSize + 1,
+    }),
+    prisma.category.count({ where: { archivedAt: null } }),
+  ]);
   const hasMore = rows.length > pageSize;
   const items = hasMore ? rows.slice(0, pageSize) : rows;
   const nextCursor = hasMore ? items[items.length - 1].id : null;
-  return okInline({ items, nextCursor, total: items.length });
+  return okInline({ items, nextCursor, total });
 }
 
 async function handleSearchCategories(args: { query: string }): Promise<ToolResult> {
